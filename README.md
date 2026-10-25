@@ -18,7 +18,7 @@ printable certificate.
 
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.92+ (edition 2024)
 - [smartmontools](https://www.smartmontools.org/) 7.0+ (`smartctl` on PATH, or set
   `DDREPORT_SMARTCTL`). Most commands need root.
 
