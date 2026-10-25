@@ -64,18 +64,18 @@ pub fn from_model(model: &str, family: Option<&str>) -> Option<&'static str> {
 /// IEEE OUI from an ATA WWN (NAA 5).
 pub fn from_oui(oui: u64) -> Option<&'static str> {
     Some(match oui {
-        0x000039 => "Toshiba",
-        0x0000f0 => "Samsung",
-        0x00080d => "Toshiba",
-        0x000c50 => "Seagate",
         0x000cca => "HGST (Western Digital)",
-        0x0014ee => "Western Digital",
-        0x001b44 => "SanDisk",
-        0x002538 => "Samsung",
+        0x5cd2e4 => "Intel",
         0x0026b7 => "Kingston",
         0x00a075 => "Micron",
+        0x0000f0 => "Samsung",
+        0x002538 => "Samsung",
+        0x001b44 => "SanDisk",
+        0x000c50 => "Seagate",
+        0x000039 => "Toshiba",
+        0x00080d => "Toshiba",
+        0x0014ee => "Western Digital",
         0x50014e => "Western Digital",
-        0x5cd2e4 => "Intel",
         _ => return None,
     })
 }
