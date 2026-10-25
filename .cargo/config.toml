@@ -1,0 +1,6 @@
+# Use Apple's toolchain on macOS even when another cc (e.g. nix gcc) is first on PATH.
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
+
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/cc"
