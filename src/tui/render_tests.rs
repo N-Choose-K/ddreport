@@ -145,7 +145,7 @@ fn app_with_report() -> App {
     );
     failing.error = Some("smartctl: unsupported USB bridge".into());
     app.on_msg(
-        Msg::Scanned(Ok(vec![
+        Msg::scanned(vec![
             Device::new(
                 DeviceSource::Smartctl {
                     path: "/dev/disk4".into(),
@@ -154,7 +154,7 @@ fn app_with_report() -> App {
                 "",
             ),
             failing,
-        ])),
+        ]),
         Instant::now(),
     );
     app.complete_load(
@@ -275,7 +275,7 @@ fn tiny_terminal_shows_notice() {
 fn empty_state() {
     let mut app = App::new(&TuiOptions::default());
     app.start();
-    app.on_msg(Msg::Scanned(Ok(vec![])), Instant::now());
+    app.on_msg(Msg::scanned(vec![]), Instant::now());
     let s = screen(&app, 80, 24);
     assert!(s.contains("No drives found"));
 }
@@ -301,7 +301,7 @@ fn fixtures_render_on_every_tab() {
         .iter()
         .map(|p| Device::new(DeviceSource::DemoFile(p.clone()), ""))
         .collect();
-    let jobs = app.on_msg(Msg::Scanned(Ok(devices)), Instant::now());
+    let jobs = app.on_msg(Msg::scanned(devices), Instant::now());
     for job in jobs {
         let msg = worker::run(job);
         assert!(matches!(&msg, Msg::Loaded { result: Ok(_), .. }), "{msg:?}");

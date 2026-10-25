@@ -10,7 +10,7 @@ use crate::smartctl::TestKind;
 
 use super::TuiOptions;
 use super::device::{Device, TestWatch};
-use super::worker::{Job, Msg, TestTarget, Ticket};
+use super::worker::{Job, Msg, ScanOutcome, TestTarget, Ticket};
 
 /// Reload cadence while a self-test runs.
 pub const TEST_POLL: Duration = Duration::from_secs(30);
@@ -209,7 +209,7 @@ impl App {
 
     pub fn on_msg(&mut self, msg: Msg, now: Instant) -> Vec<Job> {
         match msg {
-            Msg::Scanned(Ok(devices)) => {
+            Msg::Scanned(Ok(ScanOutcome { devices, skipped })) => {
                 self.scanning = false;
                 self.generation += 1;
                 let cancelled = matches!(self.modal, Some(Modal::Confirm(..)));
@@ -227,7 +227,7 @@ impl App {
                 self.devices = devices;
                 self.selected = self.selected.min(self.devices.len().saturating_sub(1));
                 self.scroll = 0;
-                self.info(format!("Found {} drive(s)", self.devices.len()));
+                self.info(scan_summary(self.devices.len(), &skipped));
                 if cancelled {
                     self.error("Confirmation cancelled: drive list changed");
                 }
@@ -586,6 +586,23 @@ fn still_confirmed(confirmed: &TestTarget, current: Option<&TestTarget>) -> bool
     confirmed.serial.is_some() && confirmed.model.is_some() && current == Some(confirmed)
 }
 
+fn scan_summary(found: usize, skipped: &[String]) -> String {
+    let names = |v: &[String]| {
+        v.iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match skipped {
+        [] => format!("Found {found} drive(s)"),
+        s => format!(
+            "Found {found} drive(s); skipped {} non-report file(s): {}",
+            s.len(),
+            names(s)
+        ),
+    }
+}
+
 pub fn kind_name(k: TestKind) -> &'static str {
     match k {
         TestKind::Short => "Short",
@@ -628,7 +645,7 @@ mod tests {
 
     fn scanned(app: &mut App, devs: Vec<Device>) -> Vec<Job> {
         app.start();
-        app.on_msg(Msg::Scanned(Ok(devs)), Instant::now())
+        app.on_msg(Msg::scanned(devs), Instant::now())
     }
 
     fn loaded(app: &mut App, key: &str, r: DriveReport, now: Instant) {
@@ -724,7 +741,7 @@ mod tests {
         assert_eq!(t.path, "/dev/b");
         assert_eq!(t.serial.as_deref(), Some("B1"));
         a.on_msg(
-            Msg::Scanned(Ok(vec![live("/dev/b"), live("/dev/a")])),
+            Msg::scanned(vec![live("/dev/b"), live("/dev/a")]),
             Instant::now(),
         );
         assert!(a.modal.is_none());
@@ -759,7 +776,7 @@ mod tests {
         assert!(matches!(a.start().as_slice(), [Job::Scan { .. }]));
         assert!(a.start().is_empty(), "no duplicate scan while scanning");
         let jobs = a.on_msg(
-            Msg::Scanned(Ok(vec![live("/dev/a"), live("/dev/b")])),
+            Msg::scanned(vec![live("/dev/a"), live("/dev/b")]),
             Instant::now(),
         );
         assert_eq!(jobs.len(), 2);
@@ -992,7 +1009,7 @@ mod tests {
 
     fn rescan_same(a: &mut App, now: Instant) {
         a.on_key(key('R'));
-        a.on_msg(Msg::Scanned(Ok(vec![live("/dev/a")])), now);
+        a.on_msg(Msg::scanned(vec![live("/dev/a")]), now);
         assert!(a.devices[0].loading());
     }
 
@@ -1232,7 +1249,7 @@ mod tests {
 
         // Rescan: a different drive now sits at /dev/a.
         a.on_key(key('R'));
-        let jobs = a.on_msg(Msg::Scanned(Ok(vec![live("/dev/a")])), Instant::now());
+        let jobs = a.on_msg(Msg::scanned(vec![live("/dev/a")]), Instant::now());
         let [Job::Load { ticket: new, .. }] = jobs.as_slice() else {
             panic!("expected one load");
         };
@@ -1264,14 +1281,31 @@ mod tests {
     }
 
     #[test]
+    fn scan_status_names_skipped_files() {
+        let mut a = app();
+        a.start();
+        a.on_msg(
+            Msg::Scanned(Ok(ScanOutcome {
+                devices: vec![live("/dev/a")],
+                skipped: vec!["fixtures/scan_open.json".into()],
+            })),
+            Instant::now(),
+        );
+        assert_eq!(
+            a.status.as_ref().unwrap().text,
+            "Found 1 drive(s); skipped 1 non-report file(s): scan_open.json"
+        );
+    }
+
+    #[test]
     fn rescan_keeps_selection_in_range() {
         let mut a = app();
         scanned(&mut a, vec![live("/dev/a"), live("/dev/b")]);
         a.on_key(key('j'));
         a.on_key(key('R'));
-        a.on_msg(Msg::Scanned(Ok(vec![live("/dev/a")])), Instant::now());
+        a.on_msg(Msg::scanned(vec![live("/dev/a")]), Instant::now());
         assert_eq!(a.selected, 0);
-        a.on_msg(Msg::Scanned(Ok(vec![])), Instant::now());
+        a.on_msg(Msg::scanned(vec![]), Instant::now());
         assert!(a.selected_device().is_none());
         assert!(a.on_key(key('r')).is_empty());
     }

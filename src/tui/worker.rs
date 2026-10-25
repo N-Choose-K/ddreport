@@ -135,9 +135,25 @@ pub enum Job {
     },
 }
 
+/// Devices found by a scan, plus demo files skipped as not being drive reports.
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    pub devices: Vec<Device>,
+    pub skipped: Vec<String>,
+}
+
+impl From<Vec<Device>> for ScanOutcome {
+    fn from(devices: Vec<Device>) -> Self {
+        Self {
+            devices,
+            skipped: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Msg {
-    Scanned(Result<Vec<Device>, String>),
+    Scanned(Result<ScanOutcome, String>),
     Loaded {
         ticket: Ticket,
         key: String,
@@ -153,6 +169,13 @@ pub enum Msg {
         result: Result<(), String>,
     },
     Exported(Result<PathBuf, String>),
+}
+
+#[cfg(test)]
+impl Msg {
+    pub fn scanned(devices: Vec<Device>) -> Self {
+        Msg::Scanned(Ok(devices.into()))
+    }
 }
 
 pub fn spawn(job: Job, tx: Sender<Msg>) {
@@ -197,12 +220,17 @@ pub fn run(job: Job) -> Msg {
     }
 }
 
-fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<Vec<Device>> {
+fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
     if !demo_files.is_empty() {
-        return Ok(demo_files
-            .into_iter()
-            .map(|p| Device::new(DeviceSource::DemoFile(p), "demo file"))
-            .collect());
+        let (reports, skipped): (Vec<_>, Vec<_>) =
+            demo_files.into_iter().partition(|p| !is_non_report(p));
+        return Ok(ScanOutcome {
+            devices: reports
+                .into_iter()
+                .map(|p| Device::new(DeviceSource::DemoFile(p), "demo file"))
+                .collect(),
+            skipped: skipped.iter().map(|p| p.display().to_string()).collect(),
+        });
     }
     Ok(smartctl::scan()?
         .into_iter()
@@ -216,7 +244,17 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<Vec<Device>> {
                 info,
             )
         })
-        .collect())
+        .collect::<Vec<_>>()
+        .into())
+}
+
+/// True for JSON that parses but is no single-drive report, e.g. `--scan-open`
+/// output. Unreadable files stay in the list so their error is shown.
+fn is_non_report(p: &std::path::Path) -> bool {
+    std::fs::read_to_string(p)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .is_some_and(|j| !j.get("device").is_some_and(serde_json::Value::is_object))
 }
 
 fn load(source: &DeviceSource, device_type: Option<String>) -> anyhow::Result<DriveReport> {
@@ -319,13 +357,29 @@ mod tests {
 
     #[test]
     fn demo_scan_lists_files_without_reading() {
-        let Msg::Scanned(Ok(devs)) = run(Job::Scan {
+        let Msg::Scanned(Ok(ScanOutcome { devices: devs, .. })) = run(Job::Scan {
             demo_files: vec!["/nonexistent/a.json".into()],
         }) else {
             panic!("expected scan result");
         };
         assert_eq!(devs.len(), 1);
         assert_eq!(devs[0].source.label(), "a");
+    }
+
+    #[test]
+    fn demo_scan_skips_non_reports() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        let files = vec![
+            dir.join("sata_hdd_wd_red_usb.json"),
+            dir.join("scan_open.json"),
+        ];
+        let Msg::Scanned(Ok(out)) = run(Job::Scan { demo_files: files }) else {
+            panic!("expected scan result");
+        };
+        assert_eq!(out.devices.len(), 1);
+        assert_eq!(out.devices[0].source.label(), "sata_hdd_wd_red_usb");
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].ends_with("scan_open.json"));
     }
 
     #[test]
