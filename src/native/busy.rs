@@ -484,10 +484,19 @@ pub fn scan_proc_fds(
                 };
                 let path = target.to_string_lossy().into_owned();
                 // stat() through the fd link: the open inode's st_rdev, however it was named.
-                let dev = fs::metadata(fd.path())
-                    .ok()
-                    .filter(|m| m.file_type().is_block_device())
-                    .map(|m| linux_dev_split(m.rdev()));
+                let meta = match fs::metadata(fd.path()) {
+                    Ok(m) => m,
+                    // The fd closed mid-scan.
+                    Err(_) if fs::symlink_metadata(fd.path()).is_err() => continue,
+                    Err(e) => {
+                        failed.push(format!("stat {}: {e}", fd.path().display()));
+                        continue;
+                    }
+                };
+                let dev = meta
+                    .file_type()
+                    .is_block_device()
+                    .then(|| linux_dev_split(meta.rdev()));
                 let dup = open
                     .iter()
                     .any(|o| o.file.pid == pid && o.file.path == path);
@@ -947,48 +956,100 @@ mod tests {
         assert!(decide(&[], &u, true).is_ok());
     }
 
+    /// Temporary fake /proc tree; removed on drop.
+    struct FakeProc(std::path::PathBuf);
+
+    impl FakeProc {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("ddreport-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("dev")).unwrap();
+            FakeProc(root)
+        }
+        fn mk(&self, p: &str) {
+            std::fs::create_dir_all(self.0.join(p)).unwrap();
+        }
+        fn write(&self, p: &str, text: &str) {
+            std::fs::write(self.0.join(p), text).unwrap();
+        }
+        /// fd-style symlink to a regular file standing in for a device node.
+        fn open(&self, node: &str, p: &str) {
+            let target = self.0.join("dev").join(node);
+            std::fs::write(&target, "").unwrap();
+            std::os::unix::fs::symlink(target, self.0.join(p)).unwrap();
+        }
+        fn link(&self, target: &str, p: &str) {
+            std::os::unix::fs::symlink(target, self.0.join(p)).unwrap();
+        }
+    }
+
+    impl Drop for FakeProc {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn node_is(p: &str, names: &[&str]) -> bool {
+        names.iter().any(|n| p.ends_with(&format!("/dev/{n}")))
+    }
+
     #[test]
     fn proc_scan_covers_threads_and_missing_tables() {
-        use std::fs;
-        use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("ddreport-proc-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let mk = |p: &str| fs::create_dir_all(root.join(p)).unwrap();
-        let link = |target: &str, p: &str| symlink(target, root.join(p)).unwrap();
+        let fp = FakeProc::new("proc");
         // 100: main thread exited; worker 101 still holds the disk.
-        mk("100/fd");
-        mk("100/task/100/fd");
-        mk("100/task/101/fd");
-        link("/dev/sdb", "100/task/101/fd/3");
-        fs::write(root.join("100/comm"), "wipe\n").unwrap();
+        fp.mk("100/fd");
+        fp.mk("100/task/100/fd");
+        fp.mk("100/task/101/fd");
+        fp.open("sdb", "100/task/101/fd/3");
+        fp.write("100/comm", "wipe\n");
         // 200: unrelated files, listed in both the process and thread tables.
-        mk("200/fd");
-        mk("200/task/200/fd");
-        link("/dev/null", "200/fd/0");
-        link("/dev/sdb1", "200/fd/4");
-        link("/dev/sdb1", "200/task/200/fd/4");
+        fp.mk("200/fd");
+        fp.mk("200/task/200/fd");
+        fp.open("null", "200/fd/0");
+        fp.open("sdb1", "200/fd/4");
+        fp.link(
+            &fp.0.join("dev/sdb1").to_string_lossy(),
+            "200/task/200/fd/4",
+        );
         // 300: live process whose fd and task tables are unavailable.
-        mk("300");
+        fp.mk("300");
         // 400: skipped (our own pid); non-numeric entries are ignored.
-        mk("400/fd");
-        link("/dev/sdb", "400/fd/1");
-        mk("self");
+        fp.mk("400/fd");
+        fp.open("sdb2", "400/fd/1");
+        fp.mk("self");
 
-        let disks = vec!["sdb".to_owned()];
-        let (open, failed) = scan_proc_fds(&root, 400, |_, p| linux_belongs(p, &disks));
-        fs::remove_dir_all(&root).unwrap();
-
-        let mut found: Vec<(u32, &str, &str)> = open
+        let (open, failed) = scan_proc_fds(&fp.0, 400, |_, p| node_is(p, &["sdb", "sdb1", "sdb2"]));
+        let mut found: Vec<(u32, bool, &str)> = open
             .iter()
-            .map(|o| (o.file.pid, o.file.path.as_str(), o.file.command.as_str()))
+            .map(|o| {
+                (
+                    o.file.pid,
+                    o.file.path.ends_with("/dev/sdb"),
+                    o.file.command.as_str(),
+                )
+            })
             .collect();
         found.sort();
-        assert_eq!(found, [(100, "/dev/sdb", "wipe"), (200, "/dev/sdb1", "")]);
+        assert_eq!(found, [(100, true, "wipe"), (200, false, "")]);
         assert_eq!(failed.len(), 2, "{failed:?}");
         assert!(failed.iter().all(|f| f.contains("/300/")));
         assert!(
             decide(&[], &failed, false).is_err(),
             "unreadable live process refuses"
         );
+    }
+
+    #[test]
+    fn proc_scan_stat_failure_is_unverified() {
+        let fp = FakeProc::new("stat");
+        fp.mk("500/fd");
+        fp.mk("500/task/500/fd");
+        // The link exists but stat() through it fails (e.g. an alternate node it can't resolve).
+        fp.link("/nonexistent/ddreport-alt-node", "500/fd/3");
+        let (open, failed) = scan_proc_fds(&fp.0, 0, |_, _| true);
+        assert!(open.is_empty());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].starts_with("stat ") && failed[0].contains("/500/fd/3"));
+        assert!(decide(&[], &failed, false).is_err());
     }
 }
