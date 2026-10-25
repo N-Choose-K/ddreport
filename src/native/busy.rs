@@ -516,6 +516,78 @@ pub fn scan_proc_fds(
     (open, failed)
 }
 
+/// Reads mountinfo once per mount namespace under `proc_root` (normally
+/// "/proc"), keyed by /proc/<pid>/ns/mnt, so mounts made in other namespaces
+/// (containers, unshare) are seen. Mounts outside `self_ns` are tagged with
+/// the pid whose namespace holds them. Returns (mounts, failed reads); ENOENT
+/// is ignored only when the process itself is gone.
+#[cfg(unix)]
+pub fn scan_mount_namespaces(
+    proc_root: &std::path::Path,
+    self_ns: Option<&str>,
+) -> (Vec<DevMount>, Vec<String>) {
+    use std::fs;
+    use std::io::ErrorKind::NotFound;
+
+    let mut mounts = Vec::new();
+    let mut failed = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let entries = match fs::read_dir(proc_root) {
+        Ok(e) => e,
+        Err(e) => return (mounts, vec![format!("{}: {e}", proc_root.display())]),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                failed.push(format!("{}: {e}", proc_root.display()));
+                continue;
+            }
+        };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let pdir = entry.path();
+        let gone =
+            |e: &std::io::Error| e.kind() == NotFound && fs::symlink_metadata(&pdir).is_err();
+        let ns = match fs::read_link(pdir.join("ns/mnt")) {
+            Ok(ns) => ns.to_string_lossy().into_owned(),
+            Err(e) if gone(&e) => continue,
+            Err(e) => {
+                failed.push(format!("{}/ns/mnt: {e}", pdir.display()));
+                continue;
+            }
+        };
+        if !seen.insert(ns.clone()) {
+            continue;
+        }
+        let text = match fs::read_to_string(pdir.join("mountinfo")) {
+            Ok(t) => t,
+            Err(e) if gone(&e) => {
+                seen.remove(&ns);
+                continue;
+            }
+            Err(e) => {
+                failed.push(format!("{}/mountinfo: {e}", pdir.display()));
+                seen.remove(&ns);
+                continue;
+            }
+        };
+        let foreign = self_ns != Some(ns.as_str());
+        mounts.extend(parse_mountinfo(&text).into_iter().map(|mut m| {
+            if foreign {
+                m.mount.target = format!("{} (mount namespace of pid {pid})", m.mount.target);
+            }
+            m
+        }));
+    }
+    (mounts, failed)
+}
+
 /// Checks the device's disk is idle before its driver is detached.
 #[cfg(target_os = "linux")]
 pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
@@ -598,12 +670,17 @@ pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
             .then(|| linux_dev_split(m.rdev()))
     };
 
-    let info = note_io(
-        fs::read_to_string("/proc/self/mountinfo"),
-        "/proc/self/mountinfo",
-        &mut unverified,
-    );
-    let mut mounts = parse_mountinfo(info.as_deref().unwrap_or_default());
+    let self_ns = fs::read_link("/proc/self/ns/mnt")
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
+    let (mut mounts, mount_failures) =
+        scan_mount_namespaces(Path::new("/proc"), self_ns.as_deref());
+    if let Some(first) = mount_failures.first() {
+        unverified.push(format!(
+            "{} mount-namespace reads failed (run as root), first: {first}",
+            mount_failures.len()
+        ));
+    }
     let swaps = note_io(
         fs::read_to_string("/proc/swaps"),
         "/proc/swaps",
@@ -1050,6 +1127,44 @@ mod tests {
         assert!(open.is_empty());
         assert_eq!(failed.len(), 1, "{failed:?}");
         assert!(failed[0].starts_with("stat ") && failed[0].contains("/500/fd/3"));
+        assert!(decide(&[], &failed, false).is_err());
+    }
+
+    #[test]
+    fn mount_namespaces_are_all_checked() {
+        let fp = FakeProc::new("mnt");
+        let line = |dev: &str, target: &str| format!("40 1 {dev} / {target} rw - ext4 /dev/x rw\n");
+        // 10 and 11 share our namespace; only one copy is read.
+        fp.mk("10/ns");
+        fp.link("mnt:[4026531841]", "10/ns/mnt");
+        fp.write("10/mountinfo", &line("8:1", "/"));
+        fp.mk("11/ns");
+        fp.link("mnt:[4026531841]", "11/ns/mnt");
+        fp.write("11/mountinfo", &line("8:1", "/"));
+        // 12: another namespace mounts the USB disk's partition.
+        fp.mk("12/ns");
+        fp.link("mnt:[4026532999]", "12/ns/mnt");
+        fp.write("12/mountinfo", &line("8:17", "/srv/data"));
+        // 13: live process whose namespace link is unreadable.
+        fp.mk("13");
+        // 14: namespace readable, mountinfo missing while the process lives.
+        fp.mk("14/ns");
+        fp.link("mnt:[4026533000]", "14/ns/mnt");
+
+        let (mounts, failed) = scan_mount_namespaces(&fp.0, Some("mnt:[4026531841]"));
+        let mut targets: Vec<&str> = mounts.iter().map(|m| m.mount.target.as_str()).collect();
+        targets.sort();
+        assert_eq!(targets, ["/", "/srv/data (mount namespace of pid 12)"]);
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert!(failed.iter().any(|f| f.contains("/13/ns/mnt")));
+        assert!(failed.iter().any(|f| f.contains("/14/mountinfo")));
+
+        let disks = vec!["sdb".to_owned()];
+        let b = linux_blockers(&disks, &[(8, 16), (8, 17)], &mounts, &[]);
+        assert_eq!(
+            b,
+            ["/dev/x is mounted on /srv/data (mount namespace of pid 12)"]
+        );
         assert!(decide(&[], &failed, false).is_err());
     }
 }
