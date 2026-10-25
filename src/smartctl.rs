@@ -342,6 +342,7 @@ pub fn parse(j: &Value, r: &mut DriveReport) {
     r.health = parse_health(j, &r.identity, &r.attributes, &r.statistics);
     r.self_tests = parse_self_tests(j);
     r.self_test_in_progress = parse_progress(j);
+    r.self_test_status_known = self_test_status_known(j);
     r.meta.backend = format!(
         "smartctl {}",
         j.pointer("/smartctl/version")
@@ -739,6 +740,14 @@ fn parse_self_tests(j: &Value) -> Vec<SelfTest> {
         .collect()
 }
 
+/// Whether the read included the drive's current self-test state.
+fn self_test_status_known(j: &Value) -> bool {
+    j.pointer("/ata_smart_data/self_test/status/value")
+        .is_some()
+        || j.pointer("/nvme_self_test_log/current_self_test_operation/value")
+            .is_some()
+}
+
 fn parse_progress(j: &Value) -> Option<SelfTestProgress> {
     if let Some(v) = u64_at(j, "/ata_smart_data/self_test/status/value") {
         if v >> 4 == 0xF {
@@ -923,6 +932,7 @@ mod tests {
         assert_eq!(r.self_tests[0].passed, Some(true));
         assert_eq!(r.self_tests[0].lifetime_hours, Some(2208));
         assert!(r.self_test_in_progress.is_none());
+        assert!(r.self_test_status_known);
     }
 
     #[test]

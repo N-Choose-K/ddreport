@@ -198,6 +198,7 @@ fn wd_red() -> DriveReport {
             ),
         ],
         self_test_in_progress: None,
+        self_test_status_known: true,
         statistics: vec![
             stat("General", "Lifetime Power-On Resets", "118"),
             stat("General", "Head Flying Hours", "21,107"),
@@ -389,6 +390,7 @@ fn seagate_failing() -> DriveReport {
             ),
         ],
         self_test_in_progress: None,
+        self_test_status_known: true,
         statistics: vec![],
         verdict: Verdict {
             grade: Grade::Fail,
@@ -483,6 +485,7 @@ fn nvme() -> DriveReport {
             test("Extended", "Completed without error", true, 6_211, None),
         ],
         self_test_in_progress: None,
+        self_test_status_known: true,
         statistics: vec![
             stat("NVMe", "Controller Busy Time", "1,203 min"),
             stat("NVMe", "Host Read Commands", "1,402,331,876"),

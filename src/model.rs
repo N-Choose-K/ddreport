@@ -12,6 +12,10 @@ pub struct DriveReport {
     pub attributes: Vec<Attribute>,
     pub self_tests: Vec<SelfTest>,
     pub self_test_in_progress: Option<SelfTestProgress>,
+    /// The drive reported its current self-test state, so a missing
+    /// `self_test_in_progress` means idle (false: unknown, e.g. a partial read).
+    #[serde(default)]
+    pub self_test_status_known: bool,
     /// Device statistics (ATA GP log 0x04) and other "label: value" facts.
     pub statistics: Vec<Stat>,
     pub verdict: Verdict,

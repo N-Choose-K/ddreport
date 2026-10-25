@@ -91,6 +91,7 @@ pub fn sample_report() -> DriveReport {
             kind: Some("Short offline".into()),
             remaining_pct: Some(40),
         }),
+        self_test_status_known: true,
         statistics: vec![Stat {
             group: "General".into(),
             name: "Logical Sectors Written".into(),

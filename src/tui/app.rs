@@ -527,11 +527,13 @@ impl App {
 }
 
 /// Updates test monitoring after a read and schedules the next one. Monitoring
-/// lasts while a test runs and ends on a fresh read showing no test or a different
-/// drive (returned as a warning). Failed or pre-command reads retry with backoff.
+/// lasts while a test runs and ends on a fresh read that reports the drive idle or
+/// shows a different drive (returned as a warning). Failed, pre-command and
+/// status-less reads retry with backoff.
 fn schedule_after_read(d: &mut Device, req: u64, ok: bool, now: Instant) -> Option<String> {
     let have = d.report.as_ref().and_then(|r| r.identity.serial.clone());
     let running = d.test_running();
+    let status_known = d.report.as_ref().is_some_and(|r| r.self_test_status_known);
     if ok && d.watch.is_none() && running {
         // A running test is monitored even when another tool started it.
         d.watch = Some(TestWatch {
@@ -560,9 +562,16 @@ fn schedule_after_read(d: &mut Device, req: u64, ok: bool, now: Instant) -> Opti
             "{path} is now a different drive; test monitoring stopped"
         ));
     }
-    if !running {
+    if !running && status_known {
         d.watch = None;
         d.next_refresh = None;
+        return None;
+    }
+    if !running {
+        // Self-test state missing from this read: the test may still run.
+        let delay = w.backoff;
+        w.backoff = (w.backoff * 2).min(TEST_POLL);
+        d.next_refresh = Some(now + delay);
         return None;
     }
     w.serial = w.serial.take().or(have);
@@ -633,8 +642,16 @@ mod tests {
         }
     }
 
+    /// A read that reports the drive idle (no self-test running).
+    fn idle() -> DriveReport {
+        DriveReport {
+            self_test_status_known: true,
+            ..Default::default()
+        }
+    }
+
     fn with_serial(serial: &str) -> DriveReport {
-        let mut r = DriveReport::default();
+        let mut r = idle();
         r.identity.model = Some("WDC WD40EFRX".into());
         r.identity.serial = Some(serial.into());
         r
@@ -876,12 +893,7 @@ mod tests {
         );
         assert_eq!(a.on_tick(t1 + TEST_POLL).len(), 1);
 
-        loaded(
-            &mut a,
-            "smartctl:/dev/a",
-            DriveReport::default(),
-            t1 + TEST_POLL,
-        );
+        loaded(&mut a, "smartctl:/dev/a", idle(), t1 + TEST_POLL);
         assert!(
             a.on_tick(t1 + TEST_POLL * 10).is_empty(),
             "polling stops once the test is done"
@@ -954,13 +966,13 @@ mod tests {
         assert!(a.devices[0].watch.is_some());
 
         // The pre-command read lands showing no test: keep watching.
-        a.complete_load(KEY_A, Ok(Box::new(DriveReport::default())), t0);
+        a.complete_load(KEY_A, Ok(Box::new(idle())), t0);
         assert!(old_req < a.devices[0].watch.as_ref().unwrap().first_req);
         assert_eq!(a.devices[0].next_refresh, Some(t0 + TEST_KICK));
 
         // A fresh read showing no test ends polling.
         a.on_tick(t0 + TEST_KICK);
-        a.complete_load(KEY_A, Ok(Box::new(DriveReport::default())), t0 + TEST_KICK);
+        a.complete_load(KEY_A, Ok(Box::new(idle())), t0 + TEST_KICK);
         assert!(a.devices[0].watch.is_none());
         assert_eq!(a.devices[0].next_refresh, None);
     }
@@ -1058,6 +1070,31 @@ mod tests {
         assert!(a.devices[0].watch.is_none());
         assert_eq!(a.devices[0].next_refresh, None);
         assert!(a.on_tick(t3 + TEST_POLL * 4).is_empty());
+    }
+
+    #[test]
+    fn read_without_self_test_status_keeps_monitoring() {
+        let mut a = app();
+        scanned(&mut a, vec![live("/dev/a")]);
+        let t0 = Instant::now();
+        loaded(&mut a, KEY_A, running_on("A1"), t0);
+        assert!(a.devices[0].watch.is_some());
+
+        // Partial read: self-test state missing, so it may still be running.
+        let t1 = t0 + TEST_POLL;
+        assert_eq!(a.on_tick(t1).len(), 1);
+        let mut partial = with_serial("A1");
+        partial.self_test_status_known = false;
+        a.complete_load(KEY_A, Ok(Box::new(partial)), t1);
+        assert!(a.devices[0].watch.is_some(), "still monitored");
+        assert_eq!(a.devices[0].next_refresh, Some(t1 + TEST_KICK));
+
+        // Known idle: monitoring ends.
+        let t2 = t1 + TEST_KICK;
+        assert_eq!(a.on_tick(t2).len(), 1);
+        a.complete_load(KEY_A, Ok(Box::new(with_serial("A1"))), t2);
+        assert!(a.devices[0].watch.is_none());
+        assert_eq!(a.devices[0].next_refresh, None);
     }
 
     #[test]
