@@ -26,7 +26,7 @@
 #let level-color(l) = (ok: green, info: ink, warn: amber, bad: red, na: faint).at(l)
 #let bar-color(l) = (ok: green, info: luma(70%), warn: amber, bad: red, na: hair).at(l)
 
-#let mono = "IBM Plex Mono"
+#let mono = "Overpass Mono"
 #let base = if roomy { 8.8pt } else if dense { 7.6pt } else { 8.3pt }
 #let small = if roomy { 7.8pt } else if dense { 6.9pt } else { 7.3pt }
 #let tiny = if roomy { 7pt } else { 6.6pt }
@@ -41,7 +41,7 @@
   paper: d.paper,
   margin: (x: 0.45in, top: 0.4in, bottom: 0.38in),
 )
-#set text(font: "IBM Plex Sans", size: base, fill: ink, number-type: "lining")
+#set text(font: "Overpass", size: base, fill: ink, number-type: "lining")
 #set par(leading: 0.45em, spacing: 0.5em)
 #set table(inset: (x: 3pt, y: 1.6pt), stroke: none)
 

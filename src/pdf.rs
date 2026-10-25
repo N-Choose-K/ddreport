@@ -46,15 +46,13 @@ pub struct PdfOptions {
     pub paper: Paper,
 }
 
-/// IBM Plex Sans and Mono (SIL OFL, see assets/fonts/OFL-IBMPlex.txt).
-static FONTS: [&[u8]; 7] = [
-    include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-Italic.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexMono-Bold.ttf"),
+/// Overpass and Overpass Mono (SIL OFL, see assets/fonts/OFL-Overpass*.txt).
+static FONTS: [&[u8]; 5] = [
+    include_bytes!("../assets/fonts/Overpass-Regular.ttf"),
+    include_bytes!("../assets/fonts/Overpass-Italic.ttf"),
+    include_bytes!("../assets/fonts/Overpass-Bold.ttf"),
+    include_bytes!("../assets/fonts/OverpassMono-Regular.ttf"),
+    include_bytes!("../assets/fonts/OverpassMono-Bold.ttf"),
 ];
 
 static ENGINE: LazyLock<TypstEngine<TypstTemplateMainFile>> = LazyLock::new(|| {
