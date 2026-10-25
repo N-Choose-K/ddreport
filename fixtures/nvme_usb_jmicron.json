@@ -1,0 +1,247 @@
+{
+ "json_format_version": [
+  1,
+  0
+ ],
+ "smartctl": {
+  "version": [
+   7,
+   4
+  ],
+  "pre_release": false,
+  "svn_revision": "5530",
+  "platform_info": "x86_64-linux-6.1.0-37-amd64",
+  "build_info": "(local build)",
+  "argv": [
+   "smartctl",
+   "-x",
+   "--json=c",
+   "-d",
+   "sntjmicron",
+   "/dev/sdb"
+  ],
+  "drive_database_version": {
+   "string": "7.4/5530"
+  },
+  "exit_status": 0
+ },
+ "local_time": {
+  "time_t": 1792904800,
+  "asctime": "Sun Oct 25 05:06:40 2026 UTC"
+ },
+ "device": {
+  "name": "/dev/sdb",
+  "info_name": "/dev/sdb [sntjmicron]",
+  "type": "sntjmicron",
+  "protocol": "NVMe"
+ },
+ "model_name": "WD Blue SN570 1TB",
+ "serial_number": "23012A400123",
+ "firmware_version": "234110WD",
+ "nvme_pci_vendor": {
+  "id": 5559,
+  "subsystem_id": 5559
+ },
+ "nvme_ieee_oui_identifier": 6980,
+ "nvme_total_capacity": 1000204886016,
+ "nvme_unallocated_capacity": 0,
+ "nvme_controller_id": 0,
+ "nvme_version": {
+  "string": "1.4",
+  "value": 66560
+ },
+ "nvme_number_of_namespaces": 1,
+ "nvme_namespaces": [
+  {
+   "id": 1,
+   "size": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+   },
+   "capacity": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+   },
+   "utilization": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+   },
+   "formatted_lba_size": 512,
+   "eui64": {
+    "oui": 6980,
+    "ext_id": 262391842817
+   }
+  }
+ ],
+ "user_capacity": {
+  "blocks": 1953525168,
+  "bytes": 1000204886016
+ },
+ "logical_block_size": 512,
+ "smart_support": {
+  "available": true,
+  "enabled": true
+ },
+ "nvme_firmware_update_capabilities": {
+  "value": 22,
+  "slots": 3,
+  "first_slot_is_read_only": false,
+  "activiation_without_reset": true,
+  "multiple_update_detection": false,
+  "other": 0
+ },
+ "nvme_optional_admin_commands": {
+  "value": 23,
+  "security_send_receive": true,
+  "format_nvm": true,
+  "firmware_download": true,
+  "namespace_management": false,
+  "self_test": true,
+  "directives": false,
+  "mi_send_receive": false,
+  "virtualization_management": false,
+  "doorbell_buffer_config": false,
+  "get_lba_status": false,
+  "command_and_feature_lockdown": false,
+  "other": 0
+ },
+ "nvme_optional_nvm_commands": {
+  "value": 94,
+  "compare": false,
+  "write_uncorrectable": true,
+  "dataset_management": true,
+  "write_zeroes": true,
+  "save_select_feature_nonzero": true,
+  "reservations": false,
+  "timestamp": true,
+  "verify": false,
+  "copy": false,
+  "other": 0
+ },
+ "nvme_log_page_attributes": {
+  "value": 30,
+  "smart_health_per_namespace": false,
+  "commands_effects_log": true,
+  "extended_get_log_page_cmd": true,
+  "telemetry_log": true,
+  "persistent_event_log": false,
+  "supported_log_pages_log": false,
+  "telemetry_data_area_4": false,
+  "other": 0
+ },
+ "nvme_maximum_data_transfer_pages": 32,
+ "nvme_composite_temperature_threshold": {
+  "warning": 83,
+  "critical": 88
+ },
+ "temperature": {
+  "op_limit_max": 83,
+  "critical_limit_max": 88,
+  "current": 41
+ },
+ "nvme_power_states": [
+  {
+   "non_operational_state": false,
+   "relative_read_latency": 0,
+   "relative_read_throughput": 0,
+   "relative_write_latency": 0,
+   "relative_write_throughput": 0,
+   "entry_latency_us": 0,
+   "exit_latency_us": 0,
+   "max_power": {
+    "value": 330,
+    "scale": 2,
+    "units_per_watt": 100
+   }
+  },
+  {
+   "non_operational_state": false,
+   "relative_read_latency": 1,
+   "relative_read_throughput": 1,
+   "relative_write_latency": 1,
+   "relative_write_throughput": 1,
+   "entry_latency_us": 0,
+   "exit_latency_us": 0,
+   "max_power": {
+    "value": 240,
+    "scale": 2,
+    "units_per_watt": 100
+   }
+  },
+  {
+   "non_operational_state": true,
+   "relative_read_latency": 4,
+   "relative_read_throughput": 4,
+   "relative_write_latency": 4,
+   "relative_write_throughput": 4,
+   "entry_latency_us": 3900,
+   "exit_latency_us": 11000,
+   "max_power": {
+    "value": 15,
+    "scale": 1,
+    "units_per_watt": 10000
+   }
+  }
+ ],
+ "smart_status": {
+  "passed": true,
+  "nvme": {
+   "value": 0
+  }
+ },
+ "nvme_smart_health_information_log": {
+  "nsid": -1,
+  "critical_warning": 0,
+  "temperature": 41,
+  "available_spare": 100,
+  "available_spare_threshold": 10,
+  "percentage_used": 3,
+  "data_units_read": 18234567,
+  "data_units_written": 14123456,
+  "host_reads": 312345678,
+  "host_writes": 245678901,
+  "controller_busy_time": 1203,
+  "power_cycles": 187,
+  "power_on_hours": 2231,
+  "unsafe_shutdowns": 21,
+  "media_errors": 0,
+  "num_err_log_entries": 0,
+  "warning_temp_time": 0,
+  "critical_comp_time": 0
+ },
+ "spare_available": {
+  "current_percent": 100,
+  "threshold_percent": 10
+ },
+ "endurance_used": {
+  "current_percent": 3
+ },
+ "power_cycle_count": 187,
+ "power_on_time": {
+  "hours": 2231
+ },
+ "nvme_error_information_log": {
+  "size": 256,
+  "read": 0,
+  "unread": 0
+ },
+ "nvme_self_test_log": {
+  "current_self_test_operation": {
+   "value": 0,
+   "string": "No self-test in progress"
+  },
+  "table": [
+   {
+    "self_test_code": {
+     "value": 1,
+     "string": "Short"
+    },
+    "self_test_result": {
+     "value": 0,
+     "string": "Completed without error"
+    },
+    "power_on_hours": 2208
+   }
+  ]
+ }
+}
