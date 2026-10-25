@@ -387,6 +387,17 @@ pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
     )
 }
 
+/// True only if a recheck after a failed read reports NotFound (the entry
+/// vanished). Any other recheck error means it may still exist.
+pub fn vanished_from(recheck: std::io::Result<()>) -> bool {
+    matches!(recheck, Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+}
+
+#[cfg(unix)]
+fn vanished(p: &std::path::Path) -> bool {
+    vanished_from(std::fs::symlink_metadata(p).map(|_| ()))
+}
+
 /// Reports a failed read as an unverified check. NotFound (a process or
 /// holder vanishing mid-scan) is ignored.
 pub fn note_io<T>(r: std::io::Result<T>, what: &str, unverified: &mut Vec<String>) -> Option<T> {
@@ -440,7 +451,6 @@ pub fn scan_proc_fds(
             continue;
         }
         let pdir = entry.path();
-        let alive = |p: &std::path::Path| fs::symlink_metadata(p).is_ok();
 
         let mut fd_dirs = vec![(pdir.join("fd"), pdir.clone())];
         match fs::read_dir(pdir.join("task")) {
@@ -452,14 +462,14 @@ pub fn scan_proc_fds(
                     }
                 }
             }
-            Err(e) if e.kind() == NotFound && !alive(&pdir) => continue,
+            Err(e) if e.kind() == NotFound && vanished(&pdir) => continue,
             Err(e) => failed.push(format!("{}/task: {e}", pdir.display())),
         }
 
         for (dir, owner) in fd_dirs {
             let fds = match fs::read_dir(&dir) {
                 Ok(f) => f,
-                Err(e) if e.kind() == NotFound && !alive(&owner) => continue,
+                Err(e) if e.kind() == NotFound && vanished(&owner) => continue,
                 Err(e) => {
                     failed.push(format!("{}: {e}", dir.display()));
                     continue;
@@ -487,7 +497,7 @@ pub fn scan_proc_fds(
                 let meta = match fs::metadata(fd.path()) {
                     Ok(m) => m,
                     // The fd closed mid-scan.
-                    Err(_) if fs::symlink_metadata(fd.path()).is_err() => continue,
+                    Err(_) if vanished(&fd.path()) => continue,
                     Err(e) => {
                         failed.push(format!("stat {}: {e}", fd.path().display()));
                         continue;
@@ -552,8 +562,7 @@ pub fn scan_mount_namespaces(
             continue;
         };
         let pdir = entry.path();
-        let gone =
-            |e: &std::io::Error| e.kind() == NotFound && fs::symlink_metadata(&pdir).is_err();
+        let gone = |e: &std::io::Error| e.kind() == NotFound && vanished(&pdir);
         let ns = match fs::read_link(pdir.join("ns/mnt")) {
             Ok(ns) => ns.to_string_lossy().into_owned(),
             Err(e) if gone(&e) => continue,
@@ -1165,6 +1174,25 @@ mod tests {
             b,
             ["/dev/x is mounted on /srv/data (mount namespace of pid 12)"]
         );
+        assert!(decide(&[], &failed, false).is_err());
+    }
+
+    #[test]
+    fn only_not_found_recheck_counts_as_vanished() {
+        use std::io::{Error, ErrorKind};
+        assert!(vanished_from(Err(Error::from(ErrorKind::NotFound))));
+        assert!(!vanished_from(Err(Error::from(
+            ErrorKind::PermissionDenied
+        ))));
+        assert!(!vanished_from(Ok(())));
+
+        // A live fd link whose stat fails stays an unverified check.
+        let fp = FakeProc::new("recheck");
+        fp.mk("600/fd");
+        fp.mk("600/task/600/fd");
+        fp.link("/nonexistent/ddreport-node", "600/fd/3");
+        let (_, failed) = scan_proc_fds(&fp.0, 0, |_, _| true);
+        assert_eq!(failed.len(), 1, "{failed:?}");
         assert!(decide(&[], &failed, false).is_err());
     }
 }
