@@ -12,6 +12,8 @@ use super::TuiOptions;
 use super::device::{Device, TestWatch};
 use super::worker::{Job, Msg, ScanOutcome, TestTarget, Ticket};
 
+/// Fresh reads without self-test state tolerated before monitoring gives up.
+pub const MAX_UNKNOWN_READS: u8 = 5;
 /// Reload cadence while a self-test runs.
 pub const TEST_POLL: Duration = Duration::from_secs(30);
 /// First reload after starting or aborting a test.
@@ -353,6 +355,7 @@ impl App {
                 first_req,
                 backoff: TEST_KICK,
                 serial: target.serial.clone(),
+                unknown_reads: 0,
             });
             // A read already in flight predates the command; its result reschedules.
             if !d.loading() {
@@ -529,7 +532,8 @@ impl App {
 /// Updates test monitoring after a read and schedules the next one. Monitoring
 /// lasts while a test runs and ends on a fresh read that reports the drive idle or
 /// shows a different drive (returned as a warning). Failed, pre-command and
-/// status-less reads retry with backoff.
+/// status-less reads retry with backoff; `MAX_UNKNOWN_READS` status-less reads in a
+/// row end monitoring with a warning.
 fn schedule_after_read(d: &mut Device, req: u64, ok: bool, now: Instant) -> Option<String> {
     let have = d.report.as_ref().and_then(|r| r.identity.serial.clone());
     let running = d.test_running();
@@ -540,6 +544,7 @@ fn schedule_after_read(d: &mut Device, req: u64, ok: bool, now: Instant) -> Opti
             first_req: req,
             backoff: TEST_KICK,
             serial: have.clone(),
+            unknown_reads: 0,
         });
     }
     let Some(w) = d.watch.as_mut() else {
@@ -569,11 +574,18 @@ fn schedule_after_read(d: &mut Device, req: u64, ok: bool, now: Instant) -> Opti
     }
     if !running {
         // Self-test state missing from this read: the test may still run.
+        w.unknown_reads += 1;
+        if w.unknown_reads >= MAX_UNKNOWN_READS {
+            d.watch = None;
+            d.next_refresh = None;
+            return Some("Drive does not report self-test status; stopped monitoring".into());
+        }
         let delay = w.backoff;
         w.backoff = (w.backoff * 2).min(TEST_POLL);
         d.next_refresh = Some(now + delay);
         return None;
     }
+    w.unknown_reads = 0;
     w.serial = w.serial.take().or(have);
     w.backoff = TEST_KICK;
     d.next_refresh = Some(now + TEST_POLL);
@@ -1112,6 +1124,38 @@ mod tests {
         a.complete_load(KEY_A, Ok(Box::new(with_serial("A1"))), t2);
         assert!(a.devices[0].watch.is_none());
         assert_eq!(a.devices[0].next_refresh, None);
+    }
+
+    #[test]
+    fn statusless_drive_stops_monitoring_after_abort() {
+        let mut a = app();
+        scanned(&mut a, vec![live("/dev/a")]);
+        let t0 = Instant::now();
+        loaded(&mut a, KEY_A, with_serial("A1"), t0);
+        a.on_key(key('a'));
+        let target = start_target(a.on_key(key('y')));
+        a.on_msg(
+            Msg::TestAborted {
+                target,
+                result: Ok(()),
+            },
+            t0,
+        );
+        let mut t = t0 + TEST_KICK;
+        for i in 1..=MAX_UNKNOWN_READS {
+            assert_eq!(a.on_tick(t).len(), 1, "read {i} scheduled");
+            let mut r = with_serial("A1");
+            r.self_test_status_known = false;
+            a.complete_load(KEY_A, Ok(Box::new(r)), t);
+            t = a.devices[0].next_refresh.unwrap_or(t);
+        }
+        assert!(a.devices[0].watch.is_none());
+        assert_eq!(a.devices[0].next_refresh, None);
+        assert!(a.on_tick(t + TEST_POLL * 10).is_empty());
+        assert_eq!(
+            a.status.as_ref().unwrap().text,
+            "Drive does not report self-test status; stopped monitoring"
+        );
     }
 
     #[test]

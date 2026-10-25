@@ -70,6 +70,8 @@ pub struct TestWatch {
     pub backoff: Duration,
     /// Serial of the commanded drive; None = unverified (path match only).
     pub serial: Option<String>,
+    /// Consecutive fresh reads without self-test state.
+    pub unknown_reads: u8,
 }
 
 impl Device {
