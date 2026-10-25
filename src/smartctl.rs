@@ -216,7 +216,76 @@ pub fn start_self_test(
     dev_type: Option<&str>,
     kind: TestKind,
 ) -> anyhow::Result<String> {
-    let mut args = vec!["-t", kind.arg(), "--json=c"];
+    let (_, msg) = test_command(
+        device,
+        dev_type,
+        &["-t", kind.arg()],
+        "self-test not started",
+    )?;
+    Ok(started_message(kind, msg))
+}
+
+/// Result of a self-test command run together with `-i`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentifiedCommand {
+    /// smartctl's messages (e.g. expected completion time).
+    pub message: String,
+    /// Identity printed by the same smartctl run, from the handle the command used.
+    pub model: Option<String>,
+    pub serial: Option<String>,
+}
+
+/// `smartctl -i -t <kind>`: one device open both identifies the drive and starts the test.
+pub fn start_self_test_identified(
+    device: &str,
+    dev_type: Option<&str>,
+    kind: TestKind,
+) -> anyhow::Result<IdentifiedCommand> {
+    let (j, msg) = test_command(
+        device,
+        dev_type,
+        &["-i", "-t", kind.arg()],
+        "self-test not started",
+    )?;
+    let (model, serial) = identity_of(&j);
+    Ok(IdentifiedCommand {
+        message: started_message(kind, msg),
+        model,
+        serial,
+    })
+}
+
+/// `smartctl -i -X`: one device open both identifies the drive and aborts its test.
+pub fn abort_self_test_identified(
+    device: &str,
+    dev_type: Option<&str>,
+) -> anyhow::Result<IdentifiedCommand> {
+    let (j, message) = test_command(device, dev_type, &["-i", "-X"], "abort failed")?;
+    let (model, serial) = identity_of(&j);
+    Ok(IdentifiedCommand {
+        message,
+        model,
+        serial,
+    })
+}
+
+fn started_message(kind: TestKind, msg: String) -> String {
+    if msg.is_empty() {
+        format!("{} self-test started", kind.arg())
+    } else {
+        msg
+    }
+}
+
+/// Runs a self-test command; returns its JSON and joined messages.
+fn test_command(
+    device: &str,
+    dev_type: Option<&str>,
+    cmd: &[&str],
+    failure: &str,
+) -> anyhow::Result<(Value, String)> {
+    let mut args = cmd.to_vec();
+    args.push("--json=c");
     if let Some(t) = dev_type {
         args.extend(["-d", t]);
     }
@@ -224,26 +293,45 @@ pub fn start_self_test(
     let (_, j) = run_json(&args)?;
     let msg = messages(&j).join("; ");
     if exit_status(&j) & 0b111 != 0 {
-        bail!("self-test not started: {msg}");
+        bail!("{failure}: {msg}");
     }
-    Ok(if msg.is_empty() {
-        format!("{} self-test started", kind.arg())
-    } else {
-        msg
-    })
+    Ok((j, msg))
 }
 
-pub fn abort_self_test(device: &str, dev_type: Option<&str>) -> anyhow::Result<()> {
-    let mut args = vec!["-X", "--json=c"];
+/// `smartctl -i`: the (model, serial) currently answering at `device`.
+pub fn identify(
+    device: &str,
+    dev_type: Option<&str>,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let mut args = vec!["-i", "--json=c"];
     if let Some(t) = dev_type {
         args.extend(["-d", t]);
     }
     args.push(device);
     let (_, j) = run_json(&args)?;
-    if exit_status(&j) & 0b111 != 0 {
-        bail!("abort failed: {}", messages(&j).join("; "));
+    if exit_status(&j) & FATAL_EXIT_BITS != 0 {
+        bail!("cannot identify {device}: {}", messages(&j).join("; "));
     }
-    Ok(())
+    Ok(identity_of(&j))
+}
+
+/// (model, serial) as `parse` reports them.
+pub fn identity_of(j: &Value) -> (Option<String>, Option<String>) {
+    (model_of(j), str_at(j, "/serial_number"))
+}
+
+fn model_of(j: &Value) -> Option<String> {
+    str_at(j, "/model_name").or_else(|| {
+        let v = str_at(j, "/scsi_vendor")?;
+        Some(format!(
+            "{v} {}",
+            str_at(j, "/scsi_product").unwrap_or_default()
+        ))
+    })
+}
+
+pub fn abort_self_test(device: &str, dev_type: Option<&str>) -> anyhow::Result<()> {
+    test_command(device, dev_type, &["-X"], "abort failed").map(|_| ())
 }
 
 /// Fills identity, health, attributes, self-tests and statistics from smartctl JSON.
@@ -352,13 +440,7 @@ fn parse_identity(j: &Value) -> Identity {
         Some("SCSI") => Protocol::Scsi,
         _ => Protocol::Unknown,
     };
-    let model = str_at(j, "/model_name").or_else(|| {
-        let v = str_at(j, "/scsi_vendor")?;
-        Some(format!(
-            "{v} {}",
-            str_at(j, "/scsi_product").unwrap_or_default()
-        ))
-    });
+    let model = model_of(j);
     let family = str_at(j, "/model_family");
     let rotation = u64_at(j, "/rotation_rate").map(|r| r as u32);
     let media = match (protocol, rotation) {
@@ -748,6 +830,15 @@ mod tests {
         let mut r = DriveReport::default();
         parse(&j, &mut r);
         (j, r)
+    }
+
+    #[test]
+    fn identity_of_matches_parse() {
+        for f in ["sata_hdd_wd_red_usb.json", "nvme_usb_jmicron.json"] {
+            let (j, r) = load(f);
+            assert_eq!(identity_of(&j), (r.identity.model, r.identity.serial));
+        }
+        assert_eq!(identity_of(&serde_json::json!({})), (None, None));
     }
 
     #[test]
