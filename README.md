@@ -29,6 +29,8 @@ ddreport scan                                  # list drives
 sudo ddreport test /dev/sdb long               # start an extended self-test
 sudo ddreport report /dev/sdb -o wd-red.pdf
 ddreport report --from-json saved.json         # from saved `smartctl -x --json`
+ddreport scan --usb                            # list USB mass-storage devices
+sudo ddreport report --usb 1f75:0611           # USB-SATA drive via native SAT backend
 ```
 
 `report` probes common USB bridge types (`sat`, `sat,12`, `sntjmicron`,
@@ -39,7 +41,20 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
 
 - Linux: full support, including USB-SATA and USB-NVMe bridges.
 - macOS: smartctl reaches internal and Thunderbolt drives only; macOS has no
-  SCSI passthrough for USB mass storage.
+  SCSI passthrough for USB mass storage. For USB-SATA drives use the native
+  backend: `sudo ddreport report --usb 1f75:0611` (selector is `vid:pid`,
+  `vid:pid:serial` or `bus:addr` from `ddreport scan --usb`). It needs root:
+  libusb takes the device from macOS's storage driver, so the drive disappears
+  from macOS while it is read and is re-enumerated (remounted) afterwards.
+- `--usb` refuses to run if the drive is mounted, used as swap, or open in any
+  process (e.g. a wipe in progress); unmount it and stop such tools first.
+  `--force` only skips checks that can't be completed (disk not found in the
+  IORegistry or sysfs, `lsof` missing or failing, or no root privileges); a
+  detected mount or open file always stops the run.
+- The native backend sends only read commands (IDENTIFY, SMART READ
+  DATA/THRESHOLDS/LOG, SMART RETURN STATUS, READ LOG EXT) through SAT
+  ATA PASS-THROUGH over USB Bulk-Only Transport. It works on Linux too, where
+  it detaches and reattaches `usb-storage`/`uas`.
 
 ## Development
 

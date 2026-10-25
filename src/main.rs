@@ -5,6 +5,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ddreport::fmt::{bytes_human, power_on_human};
 use ddreport::model::DriveReport;
+use ddreport::native::{self, UsbSelector};
 use ddreport::report::{self, CollectOptions};
 use ddreport::smartctl::{self, TestKind};
 use ddreport::{bridge, pdf};
@@ -19,9 +20,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// List drives smartctl can open.
-    Scan,
+    Scan {
+        /// List USB mass-storage devices for --usb instead (enumeration only).
+        #[arg(long)]
+        usb: bool,
+    },
     /// Read a drive and write the PDF certificate.
-    Report(ReportArgs),
+    Report(Box<ReportArgs>),
     /// Start or abort a SMART self-test.
     Test {
         device: String,
@@ -44,7 +49,7 @@ enum Kind {
 #[derive(Args)]
 struct ReportArgs {
     /// Device path, e.g. /dev/sdb or /dev/disk4.
-    #[arg(required_unless_present = "from_json")]
+    #[arg(required_unless_present_any = ["from_json", "usb"])]
     device: Option<String>,
     /// smartctl -d type; probes USB bridge types when omitted.
     #[arg(short = 'd', long)]
@@ -52,13 +57,21 @@ struct ReportArgs {
     /// Build from saved `smartctl -x --json` output (no drive access).
     #[arg(long, conflicts_with = "device")]
     from_json: Option<PathBuf>,
+    /// Read a USB-SATA drive directly over USB (no smartctl): vid:pid,
+    /// vid:pid:serial or bus:addr from `scan --usb`. Needs root on macOS.
+    #[arg(long, value_name = "SELECTOR", conflicts_with_all = ["device", "from_json", "device_type"])]
+    usb: Option<String>,
+    /// With --usb: continue when the busy-disk check can't be completed.
+    /// Never overrides a detected mount or open file.
+    #[arg(long, requires = "usb", conflicts_with_all = ["device", "from_json"])]
+    force: bool,
     /// PDF path (default: <model>_<serial>.pdf).
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Also write the parsed report as JSON.
     #[arg(long)]
     json: Option<PathBuf>,
-    /// Also save the raw smartctl JSON (live drives only).
+    /// Also save the raw smartctl(-shaped) JSON (live drives only).
     #[arg(long, conflicts_with = "from_json")]
     save_raw: Option<PathBuf>,
 }
@@ -70,7 +83,13 @@ fn main() -> anyhow::Result<()> {
             Cli::command().print_help()?;
             Ok(())
         }
-        Some(Cmd::Scan) => {
+        Some(Cmd::Scan { usb: true }) => {
+            for d in native::list_devices()? {
+                println!("{:<32} {d}", d.selector());
+            }
+            Ok(())
+        }
+        Some(Cmd::Scan { usb: false }) => {
             for d in smartctl::scan()? {
                 println!(
                     "{:<24} {:<12} {:<6} {}",
@@ -98,12 +117,20 @@ fn main() -> anyhow::Result<()> {
             println!("{}", smartctl::start_self_test(&device, t, kind)?);
             Ok(())
         }
-        Some(Cmd::Report(a)) => run_report(a),
+        Some(Cmd::Report(a)) => run_report(*a),
     }
 }
 
 fn run_report(a: ReportArgs) -> anyhow::Result<()> {
     let r = match (&a.from_json, &a.save_raw) {
+        _ if a.usb.is_some() => {
+            let sel: UsbSelector = a.usb.as_deref().unwrap_or_default().parse()?;
+            let (r, raw) = report::from_native(&sel, a.force)?;
+            if let Some(p) = &a.save_raw {
+                std::fs::write(p, &raw).with_context(|| format!("writing {}", p.display()))?;
+            }
+            r
+        }
         (Some(path), _) => {
             let raw = std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?;
@@ -185,5 +212,30 @@ fn print_summary(r: &DriveReport) {
     );
     for f in &r.verdict.findings {
         println!("    [{:?}] {}", f.severity, f.message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("ddreport").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn usb_flag_conflicts() {
+        assert!(parse(&["report", "--usb", "1f75:0611"]).is_ok());
+        assert!(parse(&["report", "--usb", "1f75:0611", "--force"]).is_ok());
+        assert!(parse(&["report", "--usb", "1f75:0611", "/dev/disk6"]).is_err());
+        assert!(parse(&["report", "--usb", "1f75:0611", "--from-json", "x.json"]).is_err());
+        assert!(parse(&["report", "--usb", "1f75:0611", "-d", "sat"]).is_err());
+        assert!(parse(&["report", "/dev/disk6", "--force"]).is_err());
+        assert!(parse(&["report", "--from-json", "x.json", "--force"]).is_err());
+        assert!(parse(&["report"]).is_err());
+        assert!(matches!(
+            parse(&["scan", "--usb"]).unwrap().cmd,
+            Some(Cmd::Scan { usb: true })
+        ));
     }
 }
