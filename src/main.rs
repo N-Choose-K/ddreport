@@ -8,6 +8,7 @@ use ddreport::model::DriveReport;
 use ddreport::native::{self, UsbSelector};
 use ddreport::report::{self, CollectOptions};
 use ddreport::smartctl::{self, TestKind};
+use ddreport::tui::{self, TuiOptions};
 use ddreport::{bridge, pdf};
 
 #[derive(Parser)]
@@ -19,6 +20,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Interactive terminal UI (default).
+    Tui(TuiArgs),
     /// List drives smartctl can open.
     Scan {
         /// List USB mass-storage devices for --usb instead (enumeration only).
@@ -36,6 +39,19 @@ enum Cmd {
         #[arg(short = 'd', long)]
         device_type: Option<String>,
     },
+}
+
+#[derive(Args, Default)]
+struct TuiArgs {
+    /// Browse saved `smartctl -x --json` files (no drive access).
+    #[arg(long, num_args = 1.., value_name = "FILES")]
+    demo: Vec<PathBuf>,
+    /// Directory for exported PDFs.
+    #[arg(short, long, default_value = ".")]
+    out_dir: PathBuf,
+    /// smartctl -d type; probes USB bridge types when omitted.
+    #[arg(short = 'd', long)]
+    device_type: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -78,11 +94,11 @@ struct ReportArgs {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        None => {
-            use clap::CommandFactory;
-            Cli::command().print_help()?;
-            Ok(())
-        }
+        None => run_tui(TuiArgs {
+            out_dir: ".".into(),
+            ..Default::default()
+        }),
+        Some(Cmd::Tui(a)) => run_tui(a),
         Some(Cmd::Scan { usb: true }) => {
             for d in native::list_devices()? {
                 println!("{:<32} {d}", d.selector());
@@ -119,6 +135,14 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::Report(a)) => run_report(*a),
     }
+}
+
+fn run_tui(a: TuiArgs) -> anyhow::Result<()> {
+    tui::run(TuiOptions {
+        demo_files: a.demo,
+        out_dir: a.out_dir,
+        device_type: a.device_type,
+    })
 }
 
 fn run_report(a: ReportArgs) -> anyhow::Result<()> {
