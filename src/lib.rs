@@ -6,4 +6,5 @@ pub mod native;
 pub mod pdf;
 pub mod report;
 pub mod smartctl;
+pub mod tui;
 pub mod vendor;
