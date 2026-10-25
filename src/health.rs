@@ -30,10 +30,11 @@
 //! when SMART is unsupported, disabled or returned nothing. Self-tests that are
 //! in progress, aborted or interrupted are skipped. `self_tests` is newest first.
 
-use crate::fmt::{group_thousands, power_on_human};
+use crate::fmt::power_on_human;
 use crate::model::{
     DriveReport, Finding, Grade, Health, MediaKind, Protocol, SelfTest, Severity, Verdict,
 };
+use thousands::Separable;
 
 pub const REALLOCATED_FAIL: u64 = 100;
 pub const TIMEOUTS_CAUTION: u64 = 100;
@@ -330,7 +331,7 @@ fn ago(hours: u64) -> String {
     match hours {
         0 => "within the last power-on hour".into(),
         1 => "1 power-on hour ago".into(),
-        n => format!("{} power-on hours ago", group_thousands(n)),
+        n => format!("{} power-on hours ago", n.separate_with_commas()),
     }
 }
 
@@ -368,7 +369,7 @@ fn self_tests(r: &DriveReport, f: &mut Findings) {
     if newest_outcome == Outcome::Failed {
         let lba = newest
             .lba_first_error
-            .map(|l| format!(", first bad block at LBA {}", group_thousands(l)))
+            .map(|l| format!(", first bad block at LBA {}", l.separate_with_commas()))
             .unwrap_or_default();
         f.push(
             Severity::Critical,
@@ -383,7 +384,7 @@ fn self_tests(r: &DriveReport, f: &mut Findings) {
     if let Some((old, _)) = done.iter().find(|(_, o)| *o == Outcome::Failed) {
         let when = old
             .lifetime_hours
-            .map(|h| format!(" at hour {}", group_thousands(h)))
+            .map(|h| format!(" at hour {}", h.separate_with_commas()))
             .unwrap_or_default();
         f.push(
             Severity::Caution,
@@ -569,7 +570,7 @@ fn usage(r: &DriveReport, f: &mut Findings) {
 
 /// `plural(16, "sector")` -> `"16 sectors"`; a trailing "y" becomes "ies".
 fn plural(n: u64, noun: &str) -> String {
-    let count = group_thousands(n);
+    let count = n.separate_with_commas();
     match (n, noun.strip_suffix('y')) {
         (1, _) => format!("{count} {noun}"),
         (_, Some(stem)) => format!("{count} {stem}ies"),

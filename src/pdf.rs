@@ -5,6 +5,10 @@
 //! second page, rendering retries at a denser level with shorter lists.
 
 use std::fmt::Write as _;
+
+use thousands::Separable;
+
+use crate::fmt::bytes_human;
 use std::sync::LazyLock;
 
 use anyhow::{Context, anyhow};
@@ -416,7 +420,7 @@ fn identity_rows(id: &Identity, h: &Health) -> Vec<Kv> {
     rows.push(kv(
         "Capacity",
         match id.capacity_bytes {
-            Some(b) => format!("{} ({} bytes)", bytes_decimal(b), thousands(b)),
+            Some(b) => format!("{} ({} bytes)", bytes_human(b), b.separate_with_commas()),
             None => "Not reported".into(),
         },
     ));
@@ -429,7 +433,7 @@ fn identity_rows(id: &Identity, h: &Health) -> Vec<Kv> {
     }
     let media = match (id.media, id.rotation_rpm) {
         (MediaKind::Hdd, Some(rpm)) if rpm > 0 => {
-            format!("Hard disk, {} rpm", thousands(rpm.into()))
+            format!("Hard disk, {} rpm", u64::from(rpm).separate_with_commas())
         }
         (MediaKind::Hdd, _) => "Hard disk".into(),
         (MediaKind::Ssd, _) if id.protocol == Protocol::Nvme => "NVMe solid-state drive".into(),
@@ -677,7 +681,7 @@ fn uncorrectable_tile(h: &Health) -> Tile {
 
 fn bytes_tile(label: &'static str, v: Option<u64>) -> Tile {
     match v {
-        Some(b) => tile(label, bytes_decimal(b), "", Level::Info),
+        Some(b) => tile(label, bytes_human(b), "", Level::Info),
         None => na(label),
     }
 }
@@ -770,6 +774,15 @@ fn test_row(t: &SelfTest) -> TestRow {
 
 // ---------- formatting helpers ----------
 
+/// Thousands-separated, or scientific for implausibly large values.
+fn count(n: u64) -> String {
+    if n >= 1_000_000_000_000 {
+        format!("{:.2e}", n as f64)
+    } else {
+        n.separate_with_commas()
+    }
+}
+
 fn grade_label(g: Grade) -> &'static str {
     match g {
         Grade::Pass => "PASS",
@@ -826,47 +839,6 @@ fn clip(s: &str, max: usize) -> String {
         let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
         t.push('…');
         t
-    }
-}
-
-/// Thousands-separated, or scientific for implausibly large values.
-fn count(n: u64) -> String {
-    if n >= 1_000_000_000_000 {
-        format!("{:.2e}", n as f64)
-    } else {
-        thousands(n)
-    }
-}
-
-fn thousands(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Decimal units, as printed on drive labels.
-fn bytes_decimal(b: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
-    let mut v = b as f64;
-    let mut u = 0;
-    while v >= 1000.0 && u < UNITS.len() - 1 {
-        v /= 1000.0;
-        u += 1;
-    }
-    if u == 0 {
-        format!("{b} B")
-    } else if v >= 100.0 {
-        format!("{v:.0} {}", UNITS[u])
-    } else if v >= 10.0 {
-        format!("{v:.1} {}", UNITS[u])
-    } else {
-        format!("{v:.2} {}", UNITS[u])
     }
 }
 
@@ -1135,10 +1107,6 @@ mod tests {
 
     #[test]
     fn helpers() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(1234567), "1,234,567");
-        assert_eq!(bytes_decimal(4_000_787_030_016), "4.00 TB");
-        assert_eq!(bytes_decimal(512), "512 B");
         assert_eq!(years(24 * 365 * 3), "3.0 years");
         assert_eq!(truncate("abcdef", 4), "abc…");
         let temp = Attribute {
