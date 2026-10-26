@@ -82,19 +82,19 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
             let inner = popup(f, area, 60, 10, "Confirm", Color::Yellow);
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
         }
-        Modal::Eject {
+        Modal::Remount {
             label,
             bridge,
             mounts,
             ..
         } => {
             let mut text = vec![
-                Line::from(format!("Eject and read {label}?")).bold(),
+                Line::from(format!("Remount and read {label}?")).bold(),
                 Line::from(format!("via {bridge}")).dim(),
                 Line::default(),
             ];
             text.push(Line::from(
-                "Ejects every volume on the disk. At the last scan:",
+                "Unmounts every volume on the disk. At the last scan:",
             ));
             if mounts.is_empty() {
                 text.push(Line::from("  none mounted"));
@@ -103,8 +103,8 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
             }
             text.push(Line::default());
             text.push(Line::from(
-                "The drive leaves macOS for the read and is remounted afterwards. \
-                 Nothing may be using it.",
+                "The drive leaves macOS for the read; macOS mounts the volumes again \
+                 afterwards. Nothing may be using them.",
             ));
             text.push(Line::default());
             text.push(Line::from(vec![
@@ -114,7 +114,7 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
                 Span::raw(" no"),
             ]));
             let h = text.len() as u16 + 3;
-            let inner = popup(f, area, 60, h, "Eject and read", Color::Yellow);
+            let inner = popup(f, area, 60, h, "Remount and read", Color::Yellow);
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
         }
         Modal::Message { title, body, error } => {
@@ -138,7 +138,7 @@ const HELP: [(&str, &str); 15] = [
     ("Home/End", "scroll to top / bottom"),
     ("r", "re-read selected drive"),
     ("R", "rescan for drives"),
-    ("e", "eject a USB drive's volumes and read it"),
+    ("m", "remount a USB drive: unmount, read, mount again"),
     ("s", "start short self-test"),
     ("l", "start extended self-test"),
     ("a", "abort running self-test"),

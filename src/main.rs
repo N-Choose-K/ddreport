@@ -82,10 +82,10 @@ struct ReportArgs {
     /// Never overrides a detected mount or open file.
     #[arg(long, requires = "usb", conflicts_with_all = ["device", "from_json"])]
     force: bool,
-    /// With --usb: unmount the drive's volumes first. macOS remounts them after
-    /// the read.
+    /// With --usb: unmount the drive's volumes, read, and let macOS mount them
+    /// again.
     #[arg(long, requires = "usb")]
-    unmount: bool,
+    remount: bool,
     /// PDF path (default: <model>_<serial>.pdf).
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -168,7 +168,7 @@ fn run_report(a: ReportArgs) -> anyhow::Result<()> {
     let r = match (&a.from_json, &a.save_raw) {
         _ if a.usb.is_some() => {
             let sel: UsbSelector = a.usb.as_deref().unwrap_or_default().parse()?;
-            let (r, raw) = report::from_native(&sel, a.force, a.unmount)?;
+            let (r, raw) = report::from_native(&sel, a.force, a.remount)?;
             if let Some(p) = &a.save_raw {
                 std::fs::write(p, &raw).with_context(|| format!("writing {}", p.display()))?;
             }

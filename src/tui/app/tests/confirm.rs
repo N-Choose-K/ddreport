@@ -157,49 +157,49 @@ fn usb(mounts: &[&str]) -> Device {
 }
 
 #[test]
-fn eject_confirms_then_loads_with_unmount() {
+fn remount_confirms_then_loads_with_remount() {
     let mut a = app();
     let jobs = scanned(&mut a, vec![live("/dev/a"), usb(&["/Volumes/macOS"])]);
     assert_eq!(jobs.len(), 2, "USB entries load on scan too");
     assert_eq!(a.devices[1].source.label(), "CT1050MX300SSD1");
 
-    a.on_key(key('e'));
+    a.on_key(key('m'));
     assert!(a.modal.is_none(), "smartctl drive selected");
     assert!(a.status.as_ref().unwrap().error);
 
     a.on_key(code(KeyCode::Down));
-    a.on_key(key('e'));
+    a.on_key(key('m'));
     assert!(a.status.as_ref().unwrap().error, "read still in flight");
     a.complete_load(
         "usb:1f75:0611",
         Err("its volumes are mounted".into()),
         Instant::now(),
     );
-    a.on_key(key('e'));
-    let Some(Modal::Eject { key: k, mounts, .. }) = &a.modal else {
-        panic!("expected eject modal, got {:?}", a.modal);
+    a.on_key(key('m'));
+    let Some(Modal::Remount { key: k, mounts, .. }) = &a.modal else {
+        panic!("expected remount modal, got {:?}", a.modal);
     };
     assert_eq!(k, "usb:1f75:0611");
     assert_eq!(mounts, &["/Volumes/macOS"]);
 
     a.on_key(key('n'));
     assert!(a.modal.is_none());
-    a.on_key(key('e'));
+    a.on_key(key('m'));
     let jobs = a.on_key(key('y'));
     assert!(
-        matches!(jobs.as_slice(), [Job::Load { unmount: true, .. }]),
+        matches!(jobs.as_slice(), [Job::Load { remount: true, .. }]),
         "{jobs:?}"
     );
     assert!(a.devices[1].loading());
 }
 
 #[test]
-fn rescan_cancels_eject_modal() {
+fn rescan_cancels_remount_modal() {
     let mut a = app();
     scanned(&mut a, vec![usb(&[])]);
     a.complete_load("usb:1f75:0611", Err("x".into()), Instant::now());
-    a.on_key(key('e'));
-    assert!(matches!(a.modal, Some(Modal::Eject { .. })));
+    a.on_key(key('m'));
+    assert!(matches!(a.modal, Some(Modal::Remount { .. })));
     a.on_key(key('R'));
     a.on_msg(Msg::scanned(vec![usb(&[])]), Instant::now());
     assert!(a.modal.is_none());

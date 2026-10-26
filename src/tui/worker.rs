@@ -123,8 +123,9 @@ pub enum Job {
         ticket: Ticket,
         source: DeviceSource,
         device_type: Option<String>,
-        /// Native USB: unmount the drive's volumes before the read.
-        unmount: bool,
+        /// Native USB: unmount the drive's volumes before the read; the OS
+        /// mounts them again afterwards.
+        remount: bool,
     },
     StartTest {
         target: TestTarget,
@@ -204,11 +205,11 @@ pub fn run(job: Job) -> Msg {
             ticket,
             source,
             device_type,
-            unmount,
+            remount,
         } => Msg::Loaded {
             ticket,
             key: source.key(),
-            result: guarded(|| load(&source, device_type, unmount).map(Box::new)),
+            result: guarded(|| load(&source, device_type, remount).map(Box::new)),
         },
         Job::StartTest { target, kind } => Msg::TestStarted {
             result: guarded(|| self_test_command(&target, Some(kind))),
@@ -301,7 +302,7 @@ fn is_non_report(p: &std::path::Path) -> bool {
 fn load(
     source: &DeviceSource,
     device_type: Option<String>,
-    unmount: bool,
+    remount: bool,
 ) -> anyhow::Result<DriveReport> {
     match source {
         DeviceSource::Smartctl { path, .. } => report::collect(&CollectOptions {
@@ -310,22 +311,29 @@ fn load(
         }),
         DeviceSource::NativeUsb { selector, .. } => {
             if cfg!(target_os = "macos") && !native::is_root() {
-                anyhow::bail!("needs root to read USB drives: run `sudo ddreport`");
+                anyhow::bail!(
+                    "needs root: macOS only lets root take a USB device away from its \
+                     driver, which is the only way to reach SMART data behind a bridge.\n\
+                     Run `sudo ddreport`."
+                );
             }
-            if !unmount {
+            if !remount {
                 let devs = native::list_devices()?;
                 let mounts = native::disk_info(native::select(&devs, selector)?)
                     .map(|k| k.mounts)
                     .unwrap_or_default();
                 if !mounts.is_empty() {
                     anyhow::bail!(
-                        "its volumes are mounted:\n  - {}\nThe read takes the drive away from \
-                         macOS, so they must be ejected first.",
+                        "its volumes are mounted:\n  - {}\n\
+                         macOS has no SMART passthrough for USB drives: the only way to read \
+                         them is to take the device away from macOS for a few seconds, and \
+                         that cannot happen while volumes are mounted.\n\
+                         Press m to remount: unmount, read, and let macOS mount them again.",
                         mounts.join("\n  - ")
                     );
                 }
             }
-            report::from_native(selector, false, unmount)
+            report::from_native(selector, false, remount)
                 .map(|(r, _)| r)
                 .map_err(|e| anyhow::anyhow!("{}", cli_force_hint(&format!("{e:#}"), selector)))
         }
@@ -551,7 +559,7 @@ mod tests {
                 disk: None,
             },
             device_type: None,
-            unmount: false,
+            remount: false,
         }) else {
             panic!("expected load result");
         };
@@ -567,7 +575,7 @@ mod tests {
             },
             source: DeviceSource::DemoFile("/nonexistent/a.json".into()),
             device_type: None,
-            unmount: false,
+            remount: false,
         }) else {
             panic!("expected load result");
         };

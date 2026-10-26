@@ -72,8 +72,7 @@ impl DeviceSource {
         match self {
             Self::Smartctl { .. } => "Press r to retry, or start ddreport with -d <type>.",
             Self::NativeUsb { .. } => {
-                "Press e to eject its volumes and read (macOS remounts them afterwards), \
-                 or r to retry."
+                "m remounts and reads (unmount, read, macOS mounts it again); r retries."
             }
             Self::DemoFile(_) => "Press r to retry.",
         }
