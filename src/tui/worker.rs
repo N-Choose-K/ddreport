@@ -248,30 +248,25 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
         .collect();
     // macOS smartctl cannot open USB bridges; list them for the native backend.
     if cfg!(target_os = "macos") {
-        devices.extend(native::list_devices()?.iter().map(usb_device));
+        let usb = native::list_devices()?;
+        devices.extend(usb.iter().map(|d| usb_device(d, &usb)));
     }
     Ok(devices.into())
 }
 
-fn usb_device(d: &native::UsbStorageDevice) -> Device {
-    let selector = d.selector();
+fn usb_device(d: &native::UsbStorageDevice, all: &[native::UsbStorageDevice]) -> Device {
+    let selector = d.unique_selector(all);
     let name = d
         .product
         .clone()
         .or_else(|| d.manufacturer.clone())
-        .unwrap_or_else(|| selector.clone());
+        .unwrap_or_else(|| selector.to_string());
     let mut info = format!("USB {selector} [{}]", d.transport.as_str());
     if let Some(s) = &d.speed {
         info.push(' ');
         info.push_str(s);
     }
-    Device::new(
-        DeviceSource::NativeUsb {
-            selector: selector.parse().expect("selector() output parses"),
-            name,
-        },
-        info,
-    )
+    Device::new(DeviceSource::NativeUsb { selector, name }, info)
 }
 
 /// True for JSON that parses but is no single-drive report, e.g. `--scan-open`
@@ -428,7 +423,7 @@ mod tests {
             speed: Some("USB 3.x SuperSpeed (5 Gb/s)".into()),
             interface: 0,
         };
-        let d = usb_device(&dev);
+        let d = usb_device(&dev, std::slice::from_ref(&dev));
         assert_eq!(d.source.label(), "TS4 HUB");
         assert_eq!(d.source.key(), "usb:1f75:0611:2015");
         assert_eq!(
@@ -438,6 +433,14 @@ mod tests {
         assert!(d.source.live_path().is_none());
         assert!(d.source.no_self_test_reason().is_some());
 
+        // Serials are kept verbatim so the selector matches the descriptor.
+        let odd = native::UsbStorageDevice {
+            serial: Some("a:b ".into()),
+            ..dev.clone()
+        };
+        let d = usb_device(&odd, std::slice::from_ref(&odd));
+        assert_eq!(d.source.key(), "usb:1f75:0611:a:b ");
+
         let bare = native::UsbStorageDevice {
             manufacturer: None,
             product: None,
@@ -445,9 +448,18 @@ mod tests {
             speed: None,
             ..dev
         };
-        let d = usb_device(&bare);
+        let d = usb_device(&bare, std::slice::from_ref(&bare));
         assert_eq!(d.source.label(), "1f75:0611");
         assert_eq!(d.info, "USB 1f75:0611 [BOT]");
+
+        // Two bridges with the same IDs and no serial: keyed by bus:addr.
+        let twin = native::UsbStorageDevice {
+            address: 14,
+            ..bare.clone()
+        };
+        let all = vec![bare, twin];
+        assert_eq!(usb_device(&all[0], &all).source.key(), "usb:0:13");
+        assert_eq!(usb_device(&all[1], &all).source.key(), "usb:0:14");
     }
 
     #[cfg(target_os = "macos")]

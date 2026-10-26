@@ -77,11 +77,29 @@ pub struct UsbStorageDevice {
 impl UsbStorageDevice {
     /// Selector string that picks this device: "vid:pid[:serial]".
     pub fn selector(&self) -> String {
-        match &self.serial {
-            Some(s) if !s.is_empty() => {
-                format!("{:04x}:{:04x}:{s}", self.vendor_id, self.product_id)
+        self.vid_pid_selector().to_string()
+    }
+
+    /// Selector by IDs and serial (when the device reports one).
+    pub fn vid_pid_selector(&self) -> UsbSelector {
+        UsbSelector::VidPid {
+            vid: self.vendor_id,
+            pid: self.product_id,
+            serial: self.serial.clone().filter(|s| !s.is_empty()),
+        }
+    }
+
+    /// Selector that singles this device out among `all`: IDs and serial when
+    /// unique, otherwise bus and address.
+    pub fn unique_selector(&self, all: &[UsbStorageDevice]) -> UsbSelector {
+        let sel = self.vid_pid_selector();
+        if all.iter().filter(|d| sel.matches(d)).count() == 1 {
+            sel
+        } else {
+            UsbSelector::BusAddr {
+                bus: self.bus,
+                address: self.address,
             }
-            _ => format!("{:04x}:{:04x}", self.vendor_id, self.product_id),
         }
     }
 }
