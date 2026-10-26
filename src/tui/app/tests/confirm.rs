@@ -1,0 +1,141 @@
+use crate::tui::app::selftest::still_confirmed;
+
+use super::*;
+
+#[test]
+fn confirmation_needs_known_identity() {
+    let mut a = app();
+    scanned(&mut a, vec![live("/dev/a")]);
+    a.on_key(key('s'));
+    assert!(a.modal.is_none(), "no report yet");
+    loaded(
+        &mut a,
+        "smartctl:/dev/a",
+        DriveReport::default(),
+        Instant::now(),
+    );
+    a.on_key(key('s'));
+    assert!(a.modal.is_none());
+    assert_eq!(
+        a.status.as_ref().unwrap().text,
+        "Serial unknown - re-read the drive first"
+    );
+}
+
+#[test]
+fn still_confirmed_compares_every_field() {
+    let t = TestTarget {
+        key: "smartctl:/dev/a".into(),
+        path: "/dev/a".into(),
+        dev_type: Some("sat".into()),
+        generation: 2,
+        model: Some("M".into()),
+        serial: Some("S".into()),
+    };
+    assert!(still_confirmed(&t, Some(&t.clone())));
+    assert!(!still_confirmed(&t, None));
+    let changed: [fn(&mut TestTarget); 5] = [
+        |t| t.path = "/dev/b".into(),
+        |t| t.dev_type = Some("nvme".into()),
+        |t| t.generation = 3,
+        |t| t.model = Some("Other".into()),
+        |t| t.serial = Some("S2".into()),
+    ];
+    for change in changed {
+        let mut c = t.clone();
+        change(&mut c);
+        assert!(!still_confirmed(&t, Some(&c)), "{c:?}");
+    }
+    let unknown = TestTarget {
+        serial: None,
+        ..t.clone()
+    };
+    assert!(!still_confirmed(&unknown, Some(&unknown.clone())));
+}
+
+#[test]
+fn confirmation_cancelled_when_drive_list_changes() {
+    let mut a = app();
+    scanned(&mut a, vec![live("/dev/a"), live("/dev/b")]);
+    loaded(&mut a, "smartctl:/dev/a", with_serial("A1"), Instant::now());
+    loaded(&mut a, "smartctl:/dev/b", with_serial("B1"), Instant::now());
+    a.on_key(key('j'));
+    // R then s: the scan lands while the confirmation is open.
+    a.on_key(key('R'));
+    a.on_key(key('s'));
+    let Some(Modal::Confirm(_, t)) = &a.modal else {
+        panic!("expected confirmation");
+    };
+    assert_eq!(t.path, "/dev/b");
+    assert_eq!(t.serial.as_deref(), Some("B1"));
+    a.on_msg(
+        Msg::scanned(vec![live("/dev/b"), live("/dev/a")]),
+        Instant::now(),
+    );
+    assert!(a.modal.is_none());
+    assert!(a.status.as_ref().unwrap().error);
+    assert!(a.on_key(key('y')).is_empty(), "nothing left to confirm");
+}
+
+#[test]
+fn confirmation_cancelled_when_serial_changes() {
+    let mut a = app();
+    scanned(&mut a, vec![live("/dev/a")]);
+    loaded(&mut a, "smartctl:/dev/a", with_serial("A1"), Instant::now());
+    a.on_key(key('l'));
+    // A refresh reveals a different drive behind the same path.
+    loaded(&mut a, "smartctl:/dev/a", with_serial("Z9"), Instant::now());
+    assert!(a.on_key(key('y')).is_empty());
+    assert!(a.test_cmd_busy.is_empty());
+    assert_eq!(
+        a.status.as_ref().unwrap().text,
+        "Cancelled: the drive changed since confirmation"
+    );
+
+    a.on_key(key('l'));
+    let target = start_target(a.on_key(key('y')));
+    assert_eq!(target.serial.as_deref(), Some("Z9"));
+    assert_eq!(target.generation, a.generation);
+}
+
+#[test]
+fn self_test_needs_confirmation() {
+    let mut a = app();
+    scanned(&mut a, vec![live("/dev/a")]);
+    let mut r = with_serial("A1");
+    r.meta.device_type = "sntjmicron".into();
+    loaded(&mut a, "smartctl:/dev/a", r, Instant::now());
+
+    assert!(a.on_key(key('s')).is_empty());
+    assert!(matches!(
+        a.modal,
+        Some(Modal::Confirm(Confirm::Start(TestKind::Short), _))
+    ));
+    assert!(a.on_key(key('n')).is_empty());
+    assert!(a.modal.is_none());
+
+    a.on_key(key('l'));
+    let jobs = a.on_key(key('y'));
+    let [Job::StartTest { target, kind }] = jobs.as_slice() else {
+        panic!("expected StartTest, got {jobs:?}");
+    };
+    assert_eq!(target.path, "/dev/a");
+    assert_eq!(target.dev_type.as_deref(), Some("sntjmicron"));
+    assert_eq!(*kind, TestKind::Long);
+
+    a.on_key(key('a'));
+    assert!(a.modal.is_none(), "blocked while a command is in flight");
+    assert!(a.status.as_ref().unwrap().error);
+}
+
+#[test]
+fn self_test_refused_for_demo_files() {
+    let mut a = app();
+    scanned(
+        &mut a,
+        vec![Device::new(DeviceSource::DemoFile("x.json".into()), "")],
+    );
+    a.on_key(key('s'));
+    assert!(a.modal.is_none());
+    assert!(a.status.as_ref().unwrap().error);
+}

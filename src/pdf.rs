@@ -972,6 +972,7 @@ mod tests {
                 kind: Some(long.clone()),
                 remaining_pct: Some(90),
             }),
+            self_test_status_known: true,
             statistics: vec![
                 Stat {
                     group: long.clone(),
