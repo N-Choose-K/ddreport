@@ -11,7 +11,7 @@ fn self_test_log_json(log: &SelfTestLog, extended: bool) -> Value {
         .entries
         .iter()
         .map(|e| {
-            let nibble = e.status >> 4;
+            let nibble = ata::self_test_status_nibble(e.status);
             let mut status = json!({
                 "value": e.status,
                 "string": ata::self_test_log_status_string(nibble),
@@ -19,8 +19,8 @@ fn self_test_log_json(log: &SelfTestLog, extended: bool) -> Value {
             if let Some(p) = ata::self_test_passed(nibble) {
                 status["passed"] = json!(p);
             }
-            if nibble == 15 {
-                status["remaining_percent"] = json!((e.status & 0x0f) as u32 * 10);
+            if let Some(pct) = ata::self_test_remaining_percent(e.status) {
+                status["remaining_percent"] = json!(pct);
             }
             let mut row = json!({
                 "type": { "value": e.kind, "string": ata::self_test_type_string(e.kind) },
@@ -41,7 +41,7 @@ fn self_test_log_json(log: &SelfTestLog, extended: bool) -> Value {
     let errors = log
         .entries
         .iter()
-        .filter(|e| ata::self_test_passed(e.status >> 4) == Some(false))
+        .filter(|e| ata::self_test_passed(ata::self_test_status_nibble(e.status)) == Some(false))
         .count();
     let mut v = json!({
         "revision": log.revision,
@@ -184,11 +184,11 @@ pub fn build(c: &Collected, name: &str, info_name: &str) -> Value {
     if let Some(sd) = &c.smart {
         let st = sd.self_test_status;
         let mut status = json!({ "value": st, "string": ata::self_test_exec_string(st) });
-        if let Some(p) = ata::self_test_passed(st >> 4) {
+        if let Some(p) = ata::self_test_passed(ata::self_test_status_nibble(st)) {
             status["passed"] = json!(p);
         }
-        if st >> 4 == 15 {
-            status["remaining_percent"] = json!((st & 0x0f) as u32 * 10);
+        if let Some(pct) = ata::self_test_remaining_percent(st) {
+            status["remaining_percent"] = json!(pct);
         }
         let mut polling = json!({ "short": sd.short_minutes, "extended": sd.extended_minutes });
         if sd.conveyance_supported() {
@@ -310,7 +310,7 @@ pub fn build(c: &Collected, name: &str, info_name: &str) -> Value {
     let newest_failed = [&c.selftest, &c.ext_selftest]
         .iter()
         .filter_map(|l| l.as_ref()?.entries.first())
-        .any(|e| ata::self_test_passed(e.status >> 4) == Some(false));
+        .any(|e| ata::self_test_passed(ata::self_test_status_nibble(e.status)) == Some(false));
     if newest_failed {
         exit_status |= 1 << 7;
     }

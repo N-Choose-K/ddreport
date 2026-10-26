@@ -1,17 +1,217 @@
 //! Parsers for ATA IDENTIFY DEVICE, SMART data/thresholds, self-test logs,
 //! device statistics, SCT status and log directories (ACS-3/ACS-4 layouts).
+//!
+//! Offsets and bit positions come from ACS-4 (T13/BSR INCITS 529) unless a
+//! constant says otherwise. Each layout gets its own `const` block below.
+
+const SECTOR: usize = 512;
+
+/// IDENTIFY DEVICE word numbers (ACS-4 table 45). Ranges are inclusive.
+mod id {
+    pub const SERIAL: (usize, usize) = (10, 19);
+    pub const FIRMWARE: (usize, usize) = (23, 26);
+    pub const MODEL: (usize, usize) = (27, 46);
+    /// Words 60..=61: total addressable sectors for 28-bit commands.
+    pub const LBA28_SECTORS: usize = 60;
+    /// Word 69: additional supported features.
+    pub const ADDITIONAL_SUPPORTED: usize = 69;
+    pub const EXT_SECTORS_REPORTED: u16 = 1 << 3;
+    pub const TRIM_ZEROED: u16 = 1 << 5;
+    pub const TRIM_DETERMINISTIC: u16 = 1 << 14;
+    /// Word 76: SATA capabilities. Bits 1..=3 = gen 1..=3 signalling speed.
+    pub const SATA_CAPABILITIES: usize = 76;
+    pub const SATA_GEN_FIRST_BIT: u8 = 1;
+    pub const SATA_GEN_LAST_BIT: u8 = 3;
+    /// Word 77: SATA additional capabilities. Bits 3:1 = current speed.
+    pub const SATA_ADDITIONAL: usize = 77;
+    pub const SATA_CURRENT_SHIFT: u16 = 1;
+    pub const SATA_CURRENT_MASK: u16 = 0x7;
+    pub const MAJOR_VERSION: usize = 80;
+    pub const MINOR_VERSION: usize = 81;
+    /// Words 82..=84: command sets supported; 85..=87: enabled.
+    pub const SUPPORTED_1: usize = 82;
+    pub const SUPPORTED_2: usize = 83;
+    pub const SUPPORTED_3: usize = 84;
+    pub const ENABLED_1: usize = 85;
+    pub const ENABLED_3: usize = 87;
+    /// Word 82 / 85 bit 0.
+    pub const SMART: u16 = 1 << 0;
+    /// Word 83 bit 10.
+    pub const LBA48: u16 = 1 << 10;
+    /// Word 84 / 87 bits.
+    pub const SMART_ERROR_LOG: u16 = 1 << 0;
+    pub const SMART_SELF_TEST: u16 = 1 << 1;
+    pub const GPL: u16 = 1 << 5;
+    pub const WWN_64BIT: u16 = 1 << 8;
+    /// Words 100..=103: total addressable sectors for 48-bit commands.
+    pub const LBA48_SECTORS: usize = 100;
+    /// Word 106: physical/logical sector size.
+    pub const SECTOR_SIZE: usize = 106;
+    pub const LOGICAL_SECTOR_LONGER_THAN_256_WORDS: u16 = 1 << 12;
+    pub const MULTIPLE_LOGICAL_PER_PHYSICAL: u16 = 1 << 13;
+    pub const LOGICAL_PER_PHYSICAL_EXP_MASK: u16 = 0x0f;
+    /// Words 108..=111: world wide name (NAA 4 bits, OUI 24 bits, unique ID 36 bits).
+    pub const WWN: usize = 108;
+    /// Words 117..=118: logical sector size in words.
+    pub const LOGICAL_SECTOR_WORDS: usize = 117;
+    pub const MIN_LOGICAL_SECTOR_WORDS: u32 = 256;
+    /// Word 168 bits 3:0: nominal form factor.
+    pub const FORM_FACTOR: usize = 168;
+    pub const FORM_FACTOR_MASK: u16 = 0x0f;
+    pub const FORM_FACTOR_RANGE: std::ops::RangeInclusive<u16> = 1..=9;
+    /// Word 169 bit 0: DATA SET MANAGEMENT (TRIM) supported.
+    pub const DATA_SET_MANAGEMENT: usize = 169;
+    pub const TRIM: u16 = 1 << 0;
+    /// Word 206 bit 0: SCT Command Transport supported.
+    pub const SCT: usize = 206;
+    pub const SCT_SUPPORTED: u16 = 1 << 0;
+    /// Word 217: 1 = non-rotating, 0x401..=0xfffe = RPM.
+    pub const ROTATION_RATE: usize = 217;
+    pub const NON_ROTATING: u16 = 1;
+    pub const RPM_MIN: u16 = 0x401;
+    /// Word 222: transport major version. Bits 15:12 = transport type.
+    pub const TRANSPORT_MAJOR: usize = 222;
+    pub const TRANSPORT_TYPE_SHIFT: u16 = 12;
+    pub const TRANSPORT_SERIAL: u16 = 1;
+    /// Words 230..=233: extended number of user addressable sectors.
+    pub const EXT_SECTORS: usize = 230;
+    /// Word 255: low byte 0xA5 = checksum present.
+    pub const INTEGRITY: usize = 255;
+    pub const INTEGRITY_SIGNATURE: u16 = 0xa5;
+}
+
+/// SMART READ DATA byte offsets (ACS-4 table 164 / ATA8-ACS 7.53.6).
+mod sd {
+    pub const REVISION_WORD: usize = 0;
+    pub const ATTRS: usize = 2;
+    pub const ATTR_COUNT: usize = 30;
+    pub const ATTR_SIZE: usize = 12;
+    /// Attribute entry layout.
+    pub const ATTR_ID: usize = 0;
+    pub const ATTR_FLAGS: usize = 1;
+    pub const ATTR_VALUE: usize = 3;
+    pub const ATTR_WORST: usize = 4;
+    pub const ATTR_RAW: std::ops::Range<usize> = 5..11;
+    /// Threshold entry: ID at 0, threshold at 1.
+    pub const THRESH_VALUE: usize = 1;
+    pub const OFFLINE_STATUS: usize = 362;
+    pub const SELF_TEST_STATUS: usize = 363;
+    pub const OFFLINE_SECONDS: usize = 364;
+    pub const OFFLINE_CAPS: usize = 367;
+    pub const SMART_CAPS: usize = 368;
+    pub const ERRLOG_CAPS: usize = 370;
+    pub const SHORT_MINUTES: usize = 372;
+    pub const EXTENDED_MINUTES_BYTE: usize = 373;
+    pub const EXTENDED_MINUTES_WORD: usize = 375;
+    pub const EXTENDED_MINUTES_IN_WORD: u8 = 0xff;
+    pub const CONVEYANCE_MINUTES: usize = 374;
+    /// Offline data collection capability bits (byte 367).
+    pub const CAP_SELF_TEST: u8 = 1 << 4;
+    pub const CAP_CONVEYANCE: u8 = 1 << 5;
+    pub const CAP_SELECTIVE: u8 = 1 << 6;
+    /// Error logging capability bit (byte 370).
+    pub const CAP_ERROR_LOGGING: u8 = 1 << 0;
+    /// Offline status byte 362: bit 7 = auto offline enabled, bits 6:0 = status.
+    pub const OFFLINE_STATUS_MASK: u8 = 0x7f;
+}
+
+/// Attribute flag bits (byte 1..=2 of an attribute entry).
+mod attr_flag {
+    pub const PREFAIL: u16 = 1 << 0;
+    pub const ONLINE: u16 = 1 << 1;
+    pub const PERFORMANCE: u16 = 1 << 2;
+    pub const ERROR_RATE: u16 = 1 << 3;
+    pub const EVENT_COUNT: u16 = 1 << 4;
+    pub const SELF_PRESERVING: u16 = 1 << 5;
+}
+
+/// SMART self-test log (log 0x06) layout.
+mod stl {
+    pub const REVISION_WORD: usize = 0;
+    pub const DESCRIPTORS: usize = 2;
+    pub const DESC_COUNT: usize = 21;
+    pub const DESC_SIZE: usize = 24;
+    pub const INDEX: usize = 508;
+    /// Descriptor layout, shared with the extended log.
+    pub const TYPE: usize = 0;
+    pub const STATUS: usize = 1;
+    pub const HOURS: usize = 2;
+    pub const LBA: usize = 5;
+    pub const LBA_BYTES: usize = 4;
+}
+
+/// Extended self-test log (GP log 0x07) layout.
+mod ext_stl {
+    pub const REVISION: usize = 0;
+    pub const INDEX_WORD: usize = 1;
+    pub const DESCRIPTORS: usize = 4;
+    pub const DESC_SIZE: usize = 26;
+    pub const LBA_BYTES: usize = 6;
+}
+
+/// Summary SMART error log (log 0x01) layout.
+mod errlog {
+    pub const VERSION: usize = 0;
+    pub const DEVICE_ERROR_COUNT: usize = 452;
+}
+
+/// SCT status (log 0xE0) layout, format versions 2 and 3.
+mod sct {
+    pub const FORMAT_VERSION_WORD: usize = 0;
+    pub const SCT_VERSION_WORD: usize = 1;
+    pub const DEVICE_STATE: usize = 10;
+    pub const CURRENT_TEMP: usize = 200;
+    pub const POWER_CYCLE_MIN: usize = 201;
+    pub const POWER_CYCLE_MAX: usize = 202;
+    pub const LIFETIME_MIN: usize = 203;
+    pub const LIFETIME_MAX: usize = 204;
+    pub const FORMAT_VERSIONS: std::ops::RangeInclusive<u16> = 2..=3;
+    /// 0x80 as i8: temperature not reported.
+    pub const TEMP_UNKNOWN: i8 = i8::MIN;
+}
+
+/// Device statistics (GP log 0x04) layout.
+mod devstat {
+    pub const ENTRY_SIZE: usize = 8;
+    /// Page 0: byte 8 = page count, bytes 9.. = page numbers.
+    pub const PAGE_LIST_COUNT: usize = 8;
+    pub const PAGE_LIST: usize = 9;
+    /// Page header qword: bits 15:0 revision, bits 23:16 page number.
+    pub const HEADER_PAGE_SHIFT: u64 = 16;
+    /// Entry qword: bits 63:56 flags; bit 63 = supported.
+    pub const FLAGS_SHIFT: u64 = 56;
+    pub const SUPPORTED: u64 = 1 << 63;
+    pub const FLAG_VALID: u8 = 1 << 6;
+    pub const FLAG_NORMALIZED: u8 = 1 << 5;
+    pub const FLAG_DSN: u8 = 1 << 4;
+    pub const FLAG_CONDITION_MET: u8 = 1 << 3;
+}
 
 fn word(b: &[u8], i: usize) -> u16 {
     u16::from_le_bytes([b[2 * i], b[2 * i + 1]])
+}
+
+fn byte_word(b: &[u8], off: usize) -> u16 {
+    u16::from_le_bytes([b[off], b[off + 1]])
 }
 
 fn qword(b: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(b[off..off + 8].try_into().expect("8 bytes"))
 }
 
+/// Little-endian unsigned integer from `n` consecutive words starting at `first`.
+fn words_le(b: &[u8], first: usize, n: usize) -> u64 {
+    (0..n).fold(0u64, |a, i| a | (word(b, first + i) as u64) << (16 * i))
+}
+
 /// Word is "valid" in the ATA sense: not 0x0000 and not 0xFFFF.
 fn valid(w: u16) -> bool {
     w != 0 && w != 0xffff
+}
+
+/// Words 83, 84, 87, 106, ...: contents are valid only when bit 15 is clear and bit 14 is set.
+fn pattern_valid(w: u16) -> bool {
+    w & 0xc000 == 0x4000
 }
 
 /// ATA string from words `first..=last`: each word holds two chars, high byte first.
@@ -26,7 +226,7 @@ pub fn ata_string(b: &[u8], first: usize, last: usize) -> String {
 
 /// 512-byte structure checksum: all bytes sum to 0 mod 256.
 pub fn checksum_ok(b: &[u8]) -> bool {
-    b[..512].iter().fold(0u8, |a, &x| a.wrapping_add(x)) == 0
+    b[..SECTOR].iter().fold(0u8, |a, &x| a.wrapping_add(x)) == 0
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -71,82 +271,93 @@ pub struct Identify {
 
 pub fn parse_identify(b: &[u8]) -> Identify {
     let w = |i| word(b, i);
-    let w83_ok = w(83) & 0xc000 == 0x4000;
-    let w84_ok = w(84) & 0xc000 == 0x4000;
-    let w87_ok = w(87) & 0xc000 == 0x4000;
-    let lba48 = w83_ok && w(83) & (1 << 10) != 0;
+    let w69 = w(id::ADDITIONAL_SUPPORTED);
+    let w83 = w(id::SUPPORTED_2);
+    let w84 = w(id::SUPPORTED_3);
+    let w87 = w(id::ENABLED_3);
+    let w106 = w(id::SECTOR_SIZE);
+    // Word 84 reports support, 87 reports enabled; drives fill either.
+    let w84_or_87 =
+        |bit: u16| (pattern_valid(w84) && w84 & bit != 0) || (pattern_valid(w87) && w87 & bit != 0);
 
+    let lba48 = pattern_valid(w83) && w83 & id::LBA48 != 0;
     let mut sectors = if lba48 {
-        (0..4).fold(0u64, |a, i| a | (w(100 + i) as u64) << (16 * i))
+        words_le(b, id::LBA48_SECTORS, 4)
     } else {
         0
     };
-    if w(69) & (1 << 3) != 0 {
-        let ext = (0..4).fold(0u64, |a, i| a | (w(230 + i) as u64) << (16 * i));
+    if w69 & id::EXT_SECTORS_REPORTED != 0 {
+        let ext = words_le(b, id::EXT_SECTORS, 4);
         if ext != 0 {
             sectors = ext;
         }
     }
     if sectors == 0 {
-        sectors = w(60) as u64 | (w(61) as u64) << 16;
+        sectors = words_le(b, id::LBA28_SECTORS, 2);
     }
 
-    let w106 = w(106);
-    let w106_ok = w106 & 0xc000 == 0x4000;
+    let w106_ok = pattern_valid(w106);
     let mut logical = 512u32;
-    if w106_ok && w106 & (1 << 12) != 0 {
-        let words = w(117) as u32 | (w(118) as u32) << 16;
-        if words >= 256 {
+    if w106_ok && w106 & id::LOGICAL_SECTOR_LONGER_THAN_256_WORDS != 0 {
+        let words = words_le(b, id::LOGICAL_SECTOR_WORDS, 2) as u32;
+        if words >= id::MIN_LOGICAL_SECTOR_WORDS {
             logical = words * 2;
         }
     }
-    let physical = if w106_ok && w106 & (1 << 13) != 0 {
-        logical << (w106 & 0x0f)
+    let physical = if w106_ok && w106 & id::MULTIPLE_LOGICAL_PER_PHYSICAL != 0 {
+        logical << (w106 & id::LOGICAL_PER_PHYSICAL_EXP_MASK)
     } else {
         logical
     };
 
-    let wwn =
-        (w87_ok && w(87) & (1 << 8) != 0 && (w(108) | w(109) | w(110) | w(111)) != 0).then(|| {
+    let wwn_words = [w(id::WWN), w(id::WWN + 1), w(id::WWN + 2), w(id::WWN + 3)];
+    let wwn = (pattern_valid(w87) && w87 & id::WWN_64BIT != 0 && wwn_words.iter().any(|&x| x != 0))
+        .then(|| {
+            let [w0, w1, w2, w3] = wwn_words;
             Wwn {
-                naa: (w(108) >> 12) as u8,
-                oui: ((w(108) as u32 & 0x0fff) << 12) | (w(109) as u32 >> 4),
-                id: ((w(109) as u64 & 0xf) << 32) | (w(110) as u64) << 16 | w(111) as u64,
+                naa: (w0 >> 12) as u8,
+                oui: ((w0 as u32 & 0x0fff) << 12) | (w1 as u32 >> 4),
+                id: ((w1 as u64 & 0xf) << 32) | (w2 as u64) << 16 | w3 as u64,
             }
         });
 
-    let rot = w(217);
-    let ff = w(168) & 0x0f;
-    let sata_caps = valid(w(76)).then_some(w(76));
-    let cur = ((w(77) >> 1) & 0x7) as u8;
-    let w222 = w(222);
-    let trim = (w(169) != 0xffff).then_some(w(169) & 1 != 0);
+    let rot = w(id::ROTATION_RATE);
+    let ff = w(id::FORM_FACTOR) & id::FORM_FACTOR_MASK;
+    let w76 = w(id::SATA_CAPABILITIES);
+    let w77 = w(id::SATA_ADDITIONAL);
+    let sata_caps = valid(w76).then_some(w76);
+    let cur = ((w77 >> id::SATA_CURRENT_SHIFT) & id::SATA_CURRENT_MASK) as u8;
+    let w222 = w(id::TRANSPORT_MAJOR);
+    let w169 = w(id::DATA_SET_MANAGEMENT);
+    let trim = (w169 != 0xffff).then_some(w169 & id::TRIM != 0);
+    let (serial, firmware, model) = (id::SERIAL, id::FIRMWARE, id::MODEL);
 
     Identify {
-        model: ata_string(b, 27, 46),
-        serial: ata_string(b, 10, 19),
-        firmware: ata_string(b, 23, 26),
+        model: ata_string(b, model.0, model.1),
+        serial: ata_string(b, serial.0, serial.1),
+        firmware: ata_string(b, firmware.0, firmware.1),
         sectors,
         logical_sector: logical,
         physical_sector: physical,
-        rotation: (rot == 1 || (0x0401..0xffff).contains(&rot)).then_some(rot),
-        form_factor: (1..=9).contains(&ff).then_some(ff as u8),
+        rotation: (rot == id::NON_ROTATING || (id::RPM_MIN..0xffff).contains(&rot)).then_some(rot),
+        form_factor: id::FORM_FACTOR_RANGE.contains(&ff).then_some(ff as u8),
         wwn,
-        ata_major: w(80),
-        ata_minor: w(81),
+        ata_major: w(id::MAJOR_VERSION),
+        ata_minor: w(id::MINOR_VERSION),
         sata_caps,
-        sata_current: (sata_caps.is_some() && valid(w(77)) && cur != 0).then_some(cur),
-        sata_version: (valid(w222) && w222 >> 12 == 1).then_some(w222),
+        sata_current: (sata_caps.is_some() && valid(w77) && cur != 0).then_some(cur),
+        sata_version: (valid(w222) && w222 >> id::TRANSPORT_TYPE_SHIFT == id::TRANSPORT_SERIAL)
+            .then_some(w222),
         trim,
-        trim_deterministic: trim == Some(true) && w(69) & (1 << 14) != 0,
-        trim_zeroed: trim == Some(true) && w(69) & (1 << 5) != 0,
-        smart_supported: valid(w(82)) && w(82) & 1 != 0,
-        smart_enabled: valid(w(85)) && w(85) & 1 != 0,
-        self_test_supported: (w84_ok && w(84) & 2 != 0) || (w87_ok && w(87) & 2 != 0),
-        error_log_supported: (w84_ok && w(84) & 1 != 0) || (w87_ok && w(87) & 1 != 0),
-        gpl_supported: (w84_ok && w(84) & 0x20 != 0) || (w87_ok && w(87) & 0x20 != 0),
-        sct_supported: valid(w(206)) && w(206) & 1 != 0,
-        checksum_ok: (w(255) & 0xff == 0xa5).then(|| checksum_ok(b)),
+        trim_deterministic: trim == Some(true) && w69 & id::TRIM_DETERMINISTIC != 0,
+        trim_zeroed: trim == Some(true) && w69 & id::TRIM_ZEROED != 0,
+        smart_supported: valid(w(id::SUPPORTED_1)) && w(id::SUPPORTED_1) & id::SMART != 0,
+        smart_enabled: valid(w(id::ENABLED_1)) && w(id::ENABLED_1) & id::SMART != 0,
+        self_test_supported: w84_or_87(id::SMART_SELF_TEST),
+        error_log_supported: w84_or_87(id::SMART_ERROR_LOG),
+        gpl_supported: w84_or_87(id::GPL),
+        sct_supported: valid(w(id::SCT)) && w(id::SCT) & id::SCT_SUPPORTED != 0,
+        checksum_ok: (w(id::INTEGRITY) & 0xff == id::INTEGRITY_SIGNATURE).then(|| checksum_ok(b)),
     }
 }
 
@@ -165,7 +376,7 @@ pub fn form_factor_name(v: u8) -> Option<&'static str> {
     })
 }
 
-/// Highest ATA standard advertised in word 80.
+/// Highest ATA standard advertised in word 80 (bit n = standard n).
 pub fn ata_major_name(w80: u16) -> Option<&'static str> {
     if !valid(w80) {
         return None;
@@ -191,7 +402,8 @@ pub fn ata_major_name(w80: u16) -> Option<&'static str> {
         .map(|bit| NAMES[bit])
 }
 
-/// smartctl-style ATA version string from words 80/81.
+/// smartctl-style ATA version string from words 80/81. Minor codes are the
+/// ACS-4 table 47 values smartctl prints by name.
 pub fn ata_version_string(w80: u16, w81: u16) -> Option<String> {
     let minor = match w81 {
         0x0028 => Some("ATA8-ACS T13/1699-D revision 6"),
@@ -209,7 +421,7 @@ pub fn ata_version_string(w80: u16, w81: u16) -> Option<String> {
     })
 }
 
-/// SATA version name from word 222.
+/// SATA version name from word 222 (bit n = version n).
 pub fn sata_version_name(w222: u16) -> Option<&'static str> {
     const NAMES: [&str; 11] = [
         "ATA8-AST",
@@ -240,9 +452,11 @@ pub fn sata_speed(generation: u8) -> Option<(&'static str, u32)> {
     }
 }
 
-/// Highest SATA generation in word 76 (bits 1..=3).
+/// Highest SATA generation in word 76.
 pub fn sata_max_generation(w76: u16) -> Option<u8> {
-    (1..=3u8).rev().find(|&g| w76 & (1 << g) != 0)
+    (id::SATA_GEN_FIRST_BIT..=id::SATA_GEN_LAST_BIT)
+        .rev()
+        .find(|&g| w76 & (1 << g) != 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,57 +486,60 @@ pub struct SmartData {
 
 impl SmartData {
     pub fn self_tests_supported(&self) -> bool {
-        self.offline_caps & 0x10 != 0
+        self.offline_caps & sd::CAP_SELF_TEST != 0
     }
     pub fn conveyance_supported(&self) -> bool {
-        self.offline_caps & 0x20 != 0
+        self.offline_caps & sd::CAP_CONVEYANCE != 0
     }
     pub fn selective_supported(&self) -> bool {
-        self.offline_caps & 0x40 != 0
+        self.offline_caps & sd::CAP_SELECTIVE != 0
     }
     pub fn error_logging_supported(&self) -> bool {
-        self.errlog_caps & 1 != 0
+        self.errlog_caps & sd::CAP_ERROR_LOGGING != 0
     }
 }
 
+fn attr_entries(b: &[u8]) -> impl Iterator<Item = &[u8]> {
+    (0..sd::ATTR_COUNT)
+        .map(move |i| &b[sd::ATTRS + sd::ATTR_SIZE * i..][..sd::ATTR_SIZE])
+        .filter(|e| e[sd::ATTR_ID] != 0)
+}
+
 pub fn parse_smart_data(b: &[u8]) -> SmartData {
-    let attrs = (0..30)
-        .map(|i| &b[2 + 12 * i..14 + 12 * i])
-        .filter(|e| e[0] != 0)
+    let attrs = attr_entries(b)
         .map(|e| SmartAttr {
-            id: e[0],
-            flags: u16::from_le_bytes([e[1], e[2]]),
-            value: e[3],
-            worst: e[4],
-            raw: e[5..11].try_into().expect("6 bytes"),
+            id: e[sd::ATTR_ID],
+            flags: byte_word(e, sd::ATTR_FLAGS),
+            value: e[sd::ATTR_VALUE],
+            worst: e[sd::ATTR_WORST],
+            raw: e[sd::ATTR_RAW].try_into().expect("6 bytes"),
         })
         .collect();
-    let ext = if b[373] == 0xff {
-        u16::from_le_bytes([b[375], b[376]])
+    let ext = if b[sd::EXTENDED_MINUTES_BYTE] == sd::EXTENDED_MINUTES_IN_WORD {
+        byte_word(b, sd::EXTENDED_MINUTES_WORD)
     } else {
-        b[373] as u16
+        b[sd::EXTENDED_MINUTES_BYTE] as u16
     };
     SmartData {
-        revision: word(b, 0),
+        revision: word(b, sd::REVISION_WORD),
         attrs,
-        offline_status: b[362],
-        self_test_status: b[363],
-        offline_seconds: u16::from_le_bytes([b[364], b[365]]),
-        offline_caps: b[367],
-        smart_caps: u16::from_le_bytes([b[368], b[369]]),
-        errlog_caps: b[370],
-        short_minutes: b[372],
+        offline_status: b[sd::OFFLINE_STATUS],
+        self_test_status: b[sd::SELF_TEST_STATUS],
+        offline_seconds: byte_word(b, sd::OFFLINE_SECONDS),
+        offline_caps: b[sd::OFFLINE_CAPS],
+        smart_caps: byte_word(b, sd::SMART_CAPS),
+        errlog_caps: b[sd::ERRLOG_CAPS],
+        short_minutes: b[sd::SHORT_MINUTES],
         extended_minutes: ext,
-        conveyance_minutes: b[374],
+        conveyance_minutes: b[sd::CONVEYANCE_MINUTES],
         checksum_ok: checksum_ok(b),
     }
 }
 
-/// (attribute ID, threshold) pairs.
+/// (attribute ID, threshold) pairs. Same entry grid as SMART READ DATA.
 pub fn parse_thresholds(b: &[u8]) -> Vec<(u8, u8)> {
-    (0..30)
-        .map(|i| (b[2 + 12 * i], b[3 + 12 * i]))
-        .filter(|&(id, _)| id != 0)
+    attr_entries(b)
+        .map(|e| (e[sd::ATTR_ID], e[sd::THRESH_VALUE]))
         .collect()
 }
 
@@ -341,21 +558,33 @@ pub fn when_failed(value: u8, worst: u8, thresh: u8) -> &'static str {
 
 /// smartctl attribute flag string, e.g. "PO--CK ".
 pub fn attr_flags_string(f: u16) -> String {
-    let c = |bit: u16, ch: char| if f & (1 << bit) != 0 { ch } else { '-' };
+    let c = |bit: u16, ch: char| if f & bit != 0 { ch } else { '-' };
     format!(
         "{}{}{}{}{}{} ",
-        c(0, 'P'),
-        c(1, 'O'),
-        c(2, 'S'),
-        c(3, 'R'),
-        c(4, 'C'),
-        c(5, 'K')
+        c(attr_flag::PREFAIL, 'P'),
+        c(attr_flag::ONLINE, 'O'),
+        c(attr_flag::PERFORMANCE, 'S'),
+        c(attr_flag::ERROR_RATE, 'R'),
+        c(attr_flag::EVENT_COUNT, 'C'),
+        c(attr_flag::SELF_PRESERVING, 'K')
     )
 }
 
-/// smartctl text for SMART data byte 363 (self-test execution status).
+/// Self-test status byte: high nibble = status, low nibble = tenths remaining.
+pub fn self_test_status_nibble(v: u8) -> u8 {
+    v >> 4
+}
+
+pub const SELF_TEST_IN_PROGRESS: u8 = 15;
+
+/// Percent of a running self-test left, from the low nibble (tenths).
+pub fn self_test_remaining_percent(v: u8) -> Option<u32> {
+    (self_test_status_nibble(v) == SELF_TEST_IN_PROGRESS).then(|| (v & 0x0f) as u32 * 10)
+}
+
+/// smartctl text for the SMART data self-test execution status byte.
 pub fn self_test_exec_string(v: u8) -> String {
-    match v >> 4 {
+    match self_test_status_nibble(v) {
         0 => "completed without error".into(),
         1 => "was aborted by the host".into(),
         2 => "was interrupted by the host with a hard or soft reset".into(),
@@ -365,7 +594,7 @@ pub fn self_test_exec_string(v: u8) -> String {
         6 => "completed having the servo (and/or seek) test element of the test failed".into(),
         7 => "completed having the read element of the test failed".into(),
         8 => "completed having a test element that failed and the device is suspected of having handling damage".into(),
-        15 => format!("in progress, {}0% remaining", v & 0x0f),
+        SELF_TEST_IN_PROGRESS => format!("in progress, {}0% remaining", v & 0x0f),
         s => format!("unknown status (0x{s:x})"),
     }
 }
@@ -381,7 +610,7 @@ pub fn self_test_passed(status_nibble: u8) -> Option<bool> {
 }
 
 pub fn offline_status_string(v: u8) -> &'static str {
-    match v & 0x7f {
+    match v & sd::OFFLINE_STATUS_MASK {
         0x00 => "was never started",
         0x02 => "was completed without error",
         0x03 => "is in progress",
@@ -398,6 +627,18 @@ pub struct SelfTestEntry {
     pub status: u8,
     pub hours: u16,
     pub lba: u64,
+}
+
+impl SelfTestEntry {
+    /// From a descriptor; `lba_bytes` is 4 (SMART log) or 6 (extended log).
+    fn from_descriptor(d: &[u8], lba_bytes: usize) -> Option<Self> {
+        d.iter().any(|&x| x != 0).then(|| SelfTestEntry {
+            kind: d[stl::TYPE],
+            status: d[stl::STATUS],
+            hours: byte_word(d, stl::HOURS),
+            lba: (0..lba_bytes).fold(0u64, |a, i| a | (d[stl::LBA + i] as u64) << (8 * i)),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -420,28 +661,21 @@ fn newest_first<T>(descs: Vec<Option<T>>, index: usize) -> Vec<T> {
         .collect()
 }
 
-/// SMART self-test log (log 0x06, 21 x 24-byte descriptors).
+/// SMART self-test log (log 0x06).
 pub fn parse_selftest_log(b: &[u8]) -> SelfTestLog {
-    let descs = (0..21)
-        .map(|i| &b[2 + 24 * i..26 + 24 * i])
-        .map(|d| {
-            d.iter().any(|&x| x != 0).then(|| SelfTestEntry {
-                kind: d[0],
-                status: d[1],
-                hours: u16::from_le_bytes([d[2], d[3]]),
-                lba: u32::from_le_bytes(d[5..9].try_into().expect("4 bytes")) as u64,
-            })
-        })
+    let descs = (0..stl::DESC_COUNT)
+        .map(|i| &b[stl::DESCRIPTORS + stl::DESC_SIZE * i..][..stl::DESC_SIZE])
+        .map(|d| SelfTestEntry::from_descriptor(d, stl::LBA_BYTES))
         .collect();
     SelfTestLog {
-        revision: word(b, 0),
+        revision: word(b, stl::REVISION_WORD),
         sectors: 1,
-        entries: newest_first(descs, b[508] as usize),
+        entries: newest_first(descs, b[stl::INDEX] as usize),
     }
 }
 
 /// Descriptors per extended self-test log page.
-pub const EXT_SELFTEST_PER_PAGE: usize = 19;
+pub const EXT_SELFTEST_PER_PAGE: usize = (SECTOR - ext_stl::DESCRIPTORS) / ext_stl::DESC_SIZE;
 
 /// Pages of a `total_pages` extended self-test log holding the newest
 /// descriptors, newest first, wrapping backwards from the page holding the
@@ -457,15 +691,15 @@ pub fn ext_selftest_pages_to_read(index: u16, total_pages: u16, max: u16) -> Vec
         .collect()
 }
 
-/// Extended self-test log (GP log 0x07, 19 x 26-byte descriptors per page;
-/// revision and descriptor index in page 0). Walks newest first across the
-/// whole circular log and stops at the first page missing from `pages`.
+/// Extended self-test log (GP log 0x07; revision and descriptor index in
+/// page 0). Walks newest first across the whole circular log and stops at
+/// the first page missing from `pages`.
 pub fn parse_ext_selftest_pages(
     page0: &[u8],
     total_pages: u16,
     pages: &std::collections::BTreeMap<u16, Vec<u8>>,
 ) -> SelfTestLog {
-    let index = word(page0, 1) as usize;
+    let index = word(page0, ext_stl::INDEX_WORD) as usize;
     let total = total_pages as usize * EXT_SELFTEST_PER_PAGE;
     let mut entries = Vec::new();
     if (1..=total).contains(&index) {
@@ -474,25 +708,19 @@ pub fn parse_ext_selftest_pages(
             let Some(pg) = pages.get(&((pos / EXT_SELFTEST_PER_PAGE) as u16)) else {
                 break;
             };
-            let o = 4 + 26 * (pos % EXT_SELFTEST_PER_PAGE);
-            let d = &pg[o..o + 26];
-            if d.iter().any(|&x| x != 0) {
-                entries.push(SelfTestEntry {
-                    kind: d[0],
-                    status: d[1],
-                    hours: u16::from_le_bytes([d[2], d[3]]),
-                    lba: (0..6).fold(0u64, |a, i| a | (d[5 + i] as u64) << (8 * i)),
-                });
-            }
+            let o = ext_stl::DESCRIPTORS + ext_stl::DESC_SIZE * (pos % EXT_SELFTEST_PER_PAGE);
+            let d = &pg[o..o + ext_stl::DESC_SIZE];
+            entries.extend(SelfTestEntry::from_descriptor(d, ext_stl::LBA_BYTES));
         }
     }
     SelfTestLog {
-        revision: page0[0] as u16,
+        revision: page0[ext_stl::REVISION] as u16,
         sectors: total_pages as usize,
         entries,
     }
 }
 
+/// Self-test type byte: bit 7 = captive mode.
 pub fn self_test_type_string(t: u8) -> String {
     match t {
         0x00 => "Offline".into(),
@@ -523,12 +751,13 @@ pub fn self_test_log_status_string(nibble: u8) -> String {
         6 => "Completed: servo/seek failure".into(),
         7 => "Completed: read failure".into(),
         8 => "Completed: handling damage??".into(),
-        15 => "Self-test routine in progress".into(),
+        SELF_TEST_IN_PROGRESS => "Self-test routine in progress".into(),
         n => format!("Unknown status (0x{n:x})"),
     }
 }
 
-/// Page counts per log address from a log directory (GP 0x00 or SMART 0x00).
+/// Page counts per log address from a log directory (GP 0x00 or SMART 0x00):
+/// word n = page count of log n; word 0 is the directory version.
 pub fn parse_log_directory(b: &[u8]) -> [u16; 256] {
     let mut d = [0u16; 256];
     for (i, n) in d.iter_mut().enumerate().skip(1) {
@@ -537,9 +766,9 @@ pub fn parse_log_directory(b: &[u8]) -> [u16; 256] {
     d
 }
 
-/// Device error count from the summary SMART error log (log 0x01).
+/// (version, device error count) from the summary SMART error log (log 0x01).
 pub fn parse_error_log_count(b: &[u8]) -> (u8, u16) {
-    (b[0], u16::from_le_bytes([b[452], b[453]]))
+    (b[errlog::VERSION], byte_word(b, errlog::DEVICE_ERROR_COUNT))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -556,20 +785,20 @@ pub struct SctStatus {
 
 /// SCT status (log 0xE0). None if the format version is unknown.
 pub fn parse_sct_status(b: &[u8]) -> Option<SctStatus> {
-    let fv = word(b, 0);
-    if !(2..=3).contains(&fv) {
+    let fv = word(b, sct::FORMAT_VERSION_WORD);
+    if !sct::FORMAT_VERSIONS.contains(&fv) {
         return None;
     }
-    let t = |o: usize| Some(b[o] as i8).filter(|&v| v != i8::MIN);
+    let t = |o: usize| Some(b[o] as i8).filter(|&v| v != sct::TEMP_UNKNOWN);
     Some(SctStatus {
         format_version: fv,
-        sct_version: word(b, 1),
-        device_state: b[10],
-        current: t(200),
-        power_cycle_min: t(201),
-        power_cycle_max: t(202),
-        lifetime_min: t(203),
-        lifetime_max: t(204),
+        sct_version: word(b, sct::SCT_VERSION_WORD),
+        device_state: b[sct::DEVICE_STATE],
+        current: t(sct::CURRENT_TEMP),
+        power_cycle_min: t(sct::POWER_CYCLE_MIN),
+        power_cycle_max: t(sct::POWER_CYCLE_MAX),
+        lifetime_min: t(sct::LIFETIME_MIN),
+        lifetime_max: t(sct::LIFETIME_MAX),
     })
 }
 
@@ -594,7 +823,7 @@ pub fn devstat_page_name(page: u8) -> &'static str {
     }
 }
 
-/// Known statistics for a page, indexed by (offset / 8 - 1).
+/// Known statistics for a page, in entry order (entry n at byte 8 * (n + 1)).
 pub fn devstat_infos(page: u8) -> &'static [DevStatInfo] {
     macro_rules! s {
         ($($size:expr, $name:expr;)*) => { &[$(DevStatInfo { name: $name, size: $size }),*] };
@@ -671,16 +900,16 @@ pub struct DevStat {
 
 impl DevStat {
     pub fn valid(&self) -> bool {
-        self.flags & 0x40 != 0
+        self.flags & devstat::FLAG_VALID != 0
     }
     pub fn normalized(&self) -> bool {
-        self.flags & 0x20 != 0
+        self.flags & devstat::FLAG_NORMALIZED != 0
     }
     pub fn supports_dsn(&self) -> bool {
-        self.flags & 0x10 != 0
+        self.flags & devstat::FLAG_DSN != 0
     }
     pub fn condition_met(&self) -> bool {
-        self.flags & 0x08 != 0
+        self.flags & devstat::FLAG_CONDITION_MET != 0
     }
     /// smartctl flag string, e.g. "V---".
     pub fn flags_string(&self) -> String {
@@ -704,8 +933,8 @@ pub struct DevStatPage {
 
 /// Supported page numbers from device statistics page 0.
 pub fn parse_devstat_page_list(b: &[u8]) -> Vec<u8> {
-    let n = b[8] as usize;
-    b[9..(9 + n).min(512)]
+    let n = b[devstat::PAGE_LIST_COUNT] as usize;
+    b[devstat::PAGE_LIST..(devstat::PAGE_LIST + n).min(SECTOR)]
         .iter()
         .copied()
         .filter(|&p| p != 0)
@@ -715,20 +944,20 @@ pub fn parse_devstat_page_list(b: &[u8]) -> Vec<u8> {
 /// One device statistics page; None if the header doesn't match `page`.
 pub fn parse_devstat_page(b: &[u8], page: u8) -> Option<DevStatPage> {
     let hdr = qword(b, 0);
-    if (hdr >> 16) as u8 != page {
+    if (hdr >> devstat::HEADER_PAGE_SHIFT) as u8 != page {
         return None;
     }
     let stats = devstat_infos(page)
         .iter()
         .enumerate()
         .filter_map(|(i, &info)| {
-            let off = 8 * (i + 1);
+            let off = devstat::ENTRY_SIZE * (i + 1);
             let q = qword(b, off);
-            if q & (1 << 63) == 0 {
+            if q & devstat::SUPPORTED == 0 {
                 return None;
             }
-            let flags = (q >> 56) as u8;
-            let value = (flags & 0x40 != 0).then(|| match info.size {
+            let flags = (q >> devstat::FLAGS_SHIFT) as u8;
+            let value = (flags & devstat::FLAG_VALID != 0).then(|| match info.size {
                 -1 => q as u8 as i8 as i64,
                 n => (q & ((1u64 << (8 * n as u32)) - 1)) as i64,
             });
