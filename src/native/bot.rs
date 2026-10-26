@@ -112,16 +112,33 @@ pub fn check_residue(
     Ok(())
 }
 
+/// Transport state after a failure: one retry after reset recovery, then every
+/// command is skipped, so a wedged bridge costs a single timeout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Health {
+    Ok,
+    /// Reset recovery ran after this failure; the next command is a probe.
+    Recovered(String),
+    /// The probe failed too; holds the first failure.
+    Dead(String),
+}
+
 /// BOT transport over a `BulkPipe`.
 pub struct Bot<P: BulkPipe> {
     pub pipe: P,
     pub lun: u8,
     tag: u32,
+    health: Health,
 }
 
 impl<P: BulkPipe> Bot<P> {
     pub fn new(pipe: P, lun: u8) -> Self {
-        Bot { pipe, lun, tag: 0 }
+        Bot {
+            pipe,
+            lun,
+            tag: 0,
+            health: Health::Ok,
+        }
     }
 
     /// Reset recovery: BOT reset, then clear halt on both bulk endpoints.
@@ -132,7 +149,14 @@ impl<P: BulkPipe> Bot<P> {
     }
 
     fn fail<T>(&mut self, msg: String) -> Result<T> {
-        self.reset_recovery();
+        match &self.health {
+            Health::Ok => {
+                self.reset_recovery();
+                self.health = Health::Recovered(msg.clone());
+            }
+            Health::Recovered(first) => self.health = Health::Dead(first.clone()),
+            Health::Dead(_) => {}
+        }
         bail!("USB BOT: {msg}")
     }
 
@@ -157,6 +181,9 @@ impl<P: BulkPipe> Bot<P> {
 
     /// One CBW/data/CSW exchange. Returns (CSW status, bytes received).
     fn exchange(&mut self, cdb: &[u8], data: &mut [u8], timeout: Duration) -> Result<(u8, usize)> {
+        if let Health::Dead(first) = &self.health {
+            bail!("USB BOT: skipped, the bridge stopped responding ({first})");
+        }
         self.tag = self.tag.wrapping_add(1);
         let tag = self.tag;
         let cbw = encode_cbw(tag, data.len() as u32, true, self.lun, cdb);
@@ -203,7 +230,10 @@ impl<P: BulkPipe> Bot<P> {
             s => return self.fail(format!("invalid CSW status {s}")),
         }
         match check_residue(csw.status, data.len(), got, csw.residue) {
-            Ok(()) => Ok((csw.status, got)),
+            Ok(()) => {
+                self.health = Health::Ok;
+                Ok((csw.status, got))
+            }
             Err(msg) => self.fail(msg),
         }
     }
@@ -317,6 +347,39 @@ mod tests {
         let mut bad = b;
         bad[0] = b'X';
         assert_eq!(decode_csw(&bad), None);
+    }
+
+    #[test]
+    fn wedged_bridge_gets_one_probe_then_skips() {
+        let mut s = Script::default();
+        let mut bot = Bot::new(&mut s, 0);
+        let cdb = [0x12, 0, 0, 0, 0, 0];
+        let e = bot.execute(&cdb, &mut [], T).unwrap_err().to_string();
+        assert!(e.contains("reading CSW"), "{e}");
+        let e = bot.execute(&cdb, &mut [], T).unwrap_err().to_string();
+        assert!(e.contains("reading CSW"), "{e}");
+        let e = bot.execute(&cdb, &mut [], T).unwrap_err().to_string();
+        assert!(e.contains("skipped, the bridge stopped responding"), "{e}");
+        assert_eq!(
+            s.out.len(),
+            2,
+            "the probe was sent; later commands were not"
+        );
+        assert_eq!(s.resets, 1, "one reset recovery, before the probe");
+    }
+
+    #[test]
+    fn probe_success_clears_the_failure() {
+        let mut s = Script::default();
+        s.ins.push_back(Err(PipeError::Timeout));
+        s.ins.push_back(csw(2, 0, 0));
+        s.ins.push_back(csw(3, 0, 0));
+        let mut bot = Bot::new(&mut s, 0);
+        let cdb = [0x12, 0, 0, 0, 0, 0];
+        assert!(bot.execute(&cdb, &mut [], T).is_err());
+        assert!(bot.execute(&cdb, &mut [], T).is_ok());
+        assert!(bot.execute(&cdb, &mut [], T).is_ok());
+        assert_eq!((s.out.len(), s.resets), (3, 1));
     }
 
     #[test]

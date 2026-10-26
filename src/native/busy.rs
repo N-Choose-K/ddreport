@@ -212,23 +212,63 @@ fn collect_bsd_names(d: &plist::Dictionary, out: &mut Vec<String>) {
 fn find_usb_device<'a>(
     d: &'a plist::Dictionary,
     dev: &UsbStorageDevice,
+    match_address: bool,
 ) -> Option<&'a plist::Dictionary> {
     let is_match = d.get("IOObjectClass").and_then(plist::Value::as_string)
         == Some("IOUSBHostDevice")
         && plist_uint(d, "idVendor") == Some(dev.vendor_id as u64)
         && plist_uint(d, "idProduct") == Some(dev.product_id as u64)
-        && plist_uint(d, "USB Address") == Some(dev.address as u64)
+        && (!match_address || plist_uint(d, "USB Address") == Some(dev.address as u64))
         && plist_uint(d, "locationID").map(|l| (l >> 24) as u8) == Some(dev.bus);
     if is_match {
         return Some(d);
     }
-    children(d).find_map(|c| find_usb_device(c, dev))
+    children(d).find_map(|c| find_usb_device(c, dev, match_address))
+}
+
+/// Polls the IORegistry until a disk shows up below the device again.
+#[cfg(target_os = "macos")]
+pub fn disk_reappeared(dev: &UsbStorageDevice, timeout: std::time::Duration) -> bool {
+    use std::process::Command;
+    let start = std::time::Instant::now();
+    loop {
+        let found = Command::new("/usr/sbin/ioreg")
+            .args(["-a", "-r", "-c", "IOUSBHostDevice", "-l"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| ioreg_bsd_names_by(&o.stdout, dev, false).ok().flatten())
+            .is_some_and(|names| !names.is_empty());
+        if found {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// Linux reattaches `usb-storage` synchronously; nothing to wait for.
+#[cfg(not(target_os = "macos"))]
+pub fn disk_reappeared(_dev: &UsbStorageDevice, _timeout: std::time::Duration) -> bool {
+    true
 }
 
 /// BSD names (whole disks, slices, synthesized APFS disks) below the USB
 /// device in `ioreg -a -r -c IOUSBHostDevice -l` output. None if the device
 /// isn't in the registry dump.
 pub fn ioreg_bsd_names(xml: &[u8], dev: &UsbStorageDevice) -> Result<Option<Vec<String>>> {
+    ioreg_bsd_names_by(xml, dev, true)
+}
+
+/// As `ioreg_bsd_names`; `match_address = false` finds the device by IDs and
+/// bus only, for after a re-enumeration has given it a new address.
+pub fn ioreg_bsd_names_by(
+    xml: &[u8],
+    dev: &UsbStorageDevice,
+    match_address: bool,
+) -> Result<Option<Vec<String>>> {
     let root = plist::Value::from_reader_xml(xml)?;
     let tops: Vec<&plist::Dictionary> = match &root {
         plist::Value::Array(a) => a.iter().filter_map(plist::Value::as_dictionary).collect(),
@@ -237,7 +277,7 @@ pub fn ioreg_bsd_names(xml: &[u8], dev: &UsbStorageDevice) -> Result<Option<Vec<
     };
     Ok(tops
         .into_iter()
-        .find_map(|d| find_usb_device(d, dev))
+        .find_map(|d| find_usb_device(d, dev, match_address))
         .map(|d| {
             let mut names = Vec::new();
             collect_bsd_names(d, &mut names);
@@ -945,6 +985,13 @@ mod tests {
             ..dev()
         };
         assert_eq!(ioreg_bsd_names(IOREG.as_bytes(), &other).unwrap(), None);
+        assert_eq!(
+            ioreg_bsd_names_by(IOREG.as_bytes(), &other, false)
+                .unwrap()
+                .unwrap(),
+            names,
+            "after re-enumeration the address differs"
+        );
         assert!(ioreg_bsd_names(b"not xml", &dev()).is_err());
     }
 

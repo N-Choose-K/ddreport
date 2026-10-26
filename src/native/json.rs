@@ -393,7 +393,11 @@ mod tests {
     use crate::native::testutil::*;
 
     fn doc(drive: MockDrive) -> Value {
-        let c = collect(&mut Sat::new(drive)).unwrap();
+        let c = collect(
+            &mut Sat::new(drive),
+            super::super::bridges::Quirks::default(),
+        )
+        .unwrap();
         build(&c, "1f75:0611", "1f75:0611 [Innostor IS611] [SAT native]")
     }
 

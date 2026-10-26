@@ -164,6 +164,22 @@ impl Claim {
     }
 }
 
+impl Claim {
+    /// Releases the interface and hands the device back to the OS driver.
+    fn release(mut self) -> Result<()> {
+        let reattach = std::mem::replace(&mut self.reattach, false);
+        self.handle
+            .release_interface(self.iface)
+            .context("releasing the interface")?;
+        if reattach {
+            self.handle
+                .attach_kernel_driver(self.iface)
+                .context("reattaching the OS driver")?;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for Claim {
     fn drop(&mut self) {
         let _ = self.handle.release_interface(self.iface);
@@ -172,6 +188,9 @@ impl Drop for Claim {
         }
     }
 }
+
+/// How long to wait for the OS to show the disk again after the handback.
+const REAPPEAR_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// BOT alternate setting and its bulk endpoints.
 fn find_bot_alt(cfg: &rusb::ConfigDescriptor, iface: u8) -> Option<(u8, u8, u8)> {
@@ -301,5 +320,21 @@ pub fn with_sat<R>(
     };
     let mut sat = Sat::new(Bot::new(pipe, 0));
     let r = f(&mut sat)?;
+    drop(sat);
+    let warn = |text: String| Message {
+        text,
+        severity: "warning",
+    };
+    if let Err(e) = claim.release() {
+        notes.push(warn(format!(
+            "handing the device back to the OS failed: {e:#}; unplug and replug the drive if it \
+             does not reappear"
+        )));
+    } else if !busy::disk_reappeared(dev, REAPPEAR_TIMEOUT) {
+        notes.push(warn(format!(
+            "the drive has not reappeared in the OS {} s after the read; unplug and replug it",
+            REAPPEAR_TIMEOUT.as_secs()
+        )));
+    }
     Ok((r, notes))
 }

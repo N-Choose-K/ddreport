@@ -263,7 +263,8 @@ pub fn read_smart(sel: &UsbSelector, force: bool, unmount: bool) -> Result<Nativ
     let dev = select(&devs, sel)?;
     // The closure lets the pipe lifetime be higher-ranked; a fn path can't.
     #[allow(clippy::redundant_closure)]
-    let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat))?;
+    let quirks = bridges::quirks(dev.vendor_id, dev.product_id);
+    let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat, quirks))?;
     c.messages.extend(notes);
     if c.pt_size == PtSize::Twelve {
         c.messages.push(Message {
