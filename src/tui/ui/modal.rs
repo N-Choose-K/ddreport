@@ -93,10 +93,12 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
                 Line::from(format!("via {bridge}")).dim(),
                 Line::default(),
             ];
+            text.push(Line::from(
+                "Ejects every volume on the disk. At the last scan:",
+            ));
             if mounts.is_empty() {
-                text.push(Line::from("No volumes mounted."));
+                text.push(Line::from("  none mounted"));
             } else {
-                text.push(Line::from("Volumes to eject:"));
                 text.extend(mounts.iter().map(|m| Line::from(format!("  {m}"))));
             }
             text.push(Line::default());

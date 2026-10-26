@@ -325,7 +325,9 @@ fn load(
                     );
                 }
             }
-            report::from_native(selector, false, unmount).map(|(r, _)| r)
+            report::from_native(selector, false, unmount)
+                .map(|(r, _)| r)
+                .map_err(|e| anyhow::anyhow!("{}", cli_force_hint(&format!("{e:#}"), selector)))
         }
         DeviceSource::DemoFile(p) => {
             let raw = std::fs::read_to_string(p)
@@ -333,6 +335,14 @@ fn load(
             report::from_smartctl_json(&raw, &p.display().to_string())
         }
     }
+}
+
+/// The native backend's `--force` advice points at the CLI; the TUI has no such key.
+fn cli_force_hint(msg: &str, selector: &native::UsbSelector) -> String {
+    msg.replace(
+        "Pass --force to continue anyway.",
+        &format!("To continue anyway run: sudo ddreport report --usb {selector} --force"),
+    )
 }
 
 /// Runs `f`, turning both errors and panics into a message string.
@@ -509,6 +519,19 @@ mod tests {
         let all = vec![bare, twin];
         assert_eq!(usb_device(&all[0], &all, None).source.key(), "usb:0:13");
         assert_eq!(usb_device(&all[1], &all, None).source.key(), "usb:0:14");
+    }
+
+    #[test]
+    fn force_advice_points_at_the_cli() {
+        let e = crate::native::busy::decide(&[], &["lsof not found".into()], false).unwrap_err();
+        let sel: native::UsbSelector = "1f75:0611:S1".parse().unwrap();
+        let m = cli_force_hint(&format!("{e:#}"), &sel);
+        assert!(m.contains("lsof not found"));
+        assert!(
+            m.ends_with("sudo ddreport report --usb 1f75:0611:S1 --force"),
+            "{m}"
+        );
+        assert!(!m.contains("Pass --force"));
     }
 
     #[cfg(target_os = "macos")]
