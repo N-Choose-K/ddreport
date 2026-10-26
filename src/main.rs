@@ -8,6 +8,7 @@ use ddreport::model::DriveReport;
 use ddreport::native::{self, UsbSelector};
 use ddreport::report::{self, CollectOptions};
 use ddreport::smartctl::{self, TestKind};
+use ddreport::tui::fmt_capacity;
 use ddreport::tui::{self, TuiOptions};
 use ddreport::{bridge, pdf};
 
@@ -81,6 +82,10 @@ struct ReportArgs {
     /// Never overrides a detected mount or open file.
     #[arg(long, requires = "usb", conflicts_with_all = ["device", "from_json"])]
     force: bool,
+    /// With --usb: unmount the drive's volumes first. macOS remounts them after
+    /// the read.
+    #[arg(long, requires = "usb")]
+    unmount: bool,
     /// PDF path (default: <model>_<serial>.pdf).
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -102,6 +107,20 @@ fn main() -> anyhow::Result<()> {
         Some(Cmd::Scan { usb: true }) => {
             for d in native::list_devices()? {
                 println!("{:<32} {d}", d.selector());
+                if let Some(k) = native::disk_info(&d) {
+                    let size = k.size_bytes.map(fmt_capacity).unwrap_or_default();
+                    let mounted = if k.mounts.is_empty() {
+                        "not mounted".to_string()
+                    } else {
+                        format!("mounted: {}", k.mounts.join(", "))
+                    };
+                    println!(
+                        "{:<32} -> {} {} {size}, {mounted}",
+                        "",
+                        k.bsd,
+                        k.media_name.unwrap_or_default()
+                    );
+                }
             }
             Ok(())
         }
@@ -149,7 +168,7 @@ fn run_report(a: ReportArgs) -> anyhow::Result<()> {
     let r = match (&a.from_json, &a.save_raw) {
         _ if a.usb.is_some() => {
             let sel: UsbSelector = a.usb.as_deref().unwrap_or_default().parse()?;
-            let (r, raw) = report::from_native(&sel, a.force)?;
+            let (r, raw) = report::from_native(&sel, a.force, a.unmount)?;
             if let Some(p) = &a.save_raw {
                 std::fs::write(p, &raw).with_context(|| format!("writing {}", p.display()))?;
             }

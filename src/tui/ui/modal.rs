@@ -82,6 +82,39 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
             let inner = popup(f, area, 60, 10, "Confirm", Color::Yellow);
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
         }
+        Modal::Eject {
+            label,
+            bridge,
+            mounts,
+            ..
+        } => {
+            let mut text = vec![
+                Line::from(format!("Eject and read {label}?")).bold(),
+                Line::from(format!("via {bridge}")).dim(),
+                Line::default(),
+            ];
+            if mounts.is_empty() {
+                text.push(Line::from("No volumes mounted."));
+            } else {
+                text.push(Line::from("Volumes to eject:"));
+                text.extend(mounts.iter().map(|m| Line::from(format!("  {m}"))));
+            }
+            text.push(Line::default());
+            text.push(Line::from(
+                "The drive leaves macOS for the read and is remounted afterwards. \
+                 Nothing may be using it.",
+            ));
+            text.push(Line::default());
+            text.push(Line::from(vec![
+                Span::styled("y", Style::new().fg(Color::Green).bold()),
+                Span::raw(" yes   "),
+                Span::styled("n", Style::new().fg(Color::Red).bold()),
+                Span::raw(" no"),
+            ]));
+            let h = text.len() as u16 + 3;
+            let inner = popup(f, area, 60, h, "Eject and read", Color::Yellow);
+            f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
+        }
         Modal::Message { title, body, error } => {
             let color = if *error { Color::Red } else { Color::Green };
             let w = 64u16.min(area.width);
@@ -96,13 +129,14 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
     }
 }
 
-const HELP: [(&str, &str); 14] = [
+const HELP: [(&str, &str); 15] = [
     ("↑/↓  k/j", "select drive"),
     ("1-5  Tab ←/→", "switch tab"),
     ("PgUp/PgDn J/K", "scroll details"),
     ("Home/End", "scroll to top / bottom"),
     ("r", "re-read selected drive"),
     ("R", "rescan for drives"),
+    ("e", "eject a USB drive's volumes and read it"),
     ("s", "start short self-test"),
     ("l", "start extended self-test"),
     ("a", "abort running self-test"),

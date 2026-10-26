@@ -25,6 +25,7 @@ pub mod bot;
 pub mod bridges;
 pub mod busy;
 pub mod collect;
+pub mod diskinfo;
 pub mod json;
 pub mod sat;
 pub mod scsi;
@@ -40,6 +41,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::model::UsbBridge;
 use collect::Message;
+pub use diskinfo::{UsbDisk, disk_info};
 use sat::PtSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,13 +256,14 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
 }
 
 /// Reads identity and SMART data from the selected USB-SATA drive. Refuses if
-/// its disk is mounted or open; `force` only skips checks that can't be done.
-pub fn read_smart(sel: &UsbSelector, force: bool) -> Result<NativeResult> {
+/// its disk is mounted or open; `unmount` unmounts its volumes first (macOS
+/// remounts them after the read); `force` only skips checks that can't be done.
+pub fn read_smart(sel: &UsbSelector, force: bool, unmount: bool) -> Result<NativeResult> {
     let devs = list_devices()?;
     let dev = select(&devs, sel)?;
     // The closure lets the pipe lifetime be higher-ranked; a fn path can't.
     #[allow(clippy::redundant_closure)]
-    let (mut c, notes) = usb::with_sat(dev, force, |sat| collect::collect(sat))?;
+    let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat))?;
     c.messages.extend(notes);
     if c.pt_size == PtSize::Twelve {
         c.messages.push(Message {

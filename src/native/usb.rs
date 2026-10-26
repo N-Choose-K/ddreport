@@ -202,6 +202,7 @@ fn find_bot_alt(cfg: &rusb::ConfigDescriptor, iface: u8) -> Option<(u8, u8, u8)>
 pub fn with_sat<R>(
     dev: &UsbStorageDevice,
     force: bool,
+    unmount: bool,
     f: impl FnOnce(&mut Sat<Bot<RusbPipe<'_>>>) -> Result<R>,
 ) -> Result<(R, Vec<Message>)> {
     let ctx = rusb::Context::new().context("initializing libusb")?;
@@ -234,6 +235,9 @@ pub fn with_sat<R>(
         )
     })?;
 
+    if unmount {
+        busy::unmount(dev)?;
+    }
     let mut notes: Vec<Message> = busy::ensure_idle(dev, force)?
         .into_iter()
         .map(|text| Message {
@@ -245,6 +249,11 @@ pub fn with_sat<R>(
         text,
         severity: "information",
     };
+    if unmount {
+        notes.push(info(
+            "volumes were unmounted for the read; the OS remounts them afterwards".into(),
+        ));
+    }
 
     let handle = device.open().map_err(|e| match e {
         rusb::Error::Access => anyhow!("permission denied opening USB device; run as root"),

@@ -21,6 +21,7 @@ use devices::draw_devices;
 use modal::draw_modal;
 use overview::overview_lines;
 use tables::{draw_attributes, draw_self_tests, draw_statistics};
+pub use text::fmt_capacity;
 
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
@@ -227,6 +228,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let used: usize = spans.iter().map(|s| s.width()).sum();
     let room = (area.width as usize).saturating_sub(used + 2);
     let hints = [
+        " r refresh  e eject+read  s/l/a self-test  p PDF  ? help  q quit ",
         " r refresh  s/l/a self-test  p PDF  ? help  q quit ",
         " s/l/a test  p PDF  ? help  q quit ",
         " p PDF  ? help  q quit ",

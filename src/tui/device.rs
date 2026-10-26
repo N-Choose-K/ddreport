@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::model::{DriveReport, Grade};
-use crate::native::UsbSelector;
+use crate::native::{UsbDisk, UsbSelector};
 
 /// Where a device's report comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +19,9 @@ pub enum DeviceSource {
     NativeUsb {
         selector: UsbSelector,
         /// Bridge product name from the USB descriptors; the selector when absent.
-        name: String,
+        bridge: String,
+        /// The disk behind the bridge, as far as the OS knows without a read.
+        disk: Option<UsbDisk>,
     },
     /// Saved `smartctl -x --json` output.
     DemoFile(PathBuf),
@@ -38,7 +40,10 @@ impl DeviceSource {
     pub fn label(&self) -> String {
         match self {
             Self::Smartctl { path, .. } => path.clone(),
-            Self::NativeUsb { name, .. } => name.clone(),
+            Self::NativeUsb { bridge, disk, .. } => disk
+                .as_ref()
+                .and_then(|k| k.media_name.clone())
+                .unwrap_or_else(|| bridge.clone()),
             Self::DemoFile(p) => p
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -54,12 +59,21 @@ impl DeviceSource {
         }
     }
 
+    /// Mount points of the drive's volumes, when known.
+    pub fn mounts(&self) -> &[String] {
+        match self {
+            Self::NativeUsb { disk: Some(k), .. } => &k.mounts,
+            _ => &[],
+        }
+    }
+
     /// Shown under a failed read.
     pub fn retry_hint(&self) -> &'static str {
         match self {
             Self::Smartctl { .. } => "Press r to retry, or start ddreport with -d <type>.",
             Self::NativeUsb { .. } => {
-                "Eject the drive's volumes (diskutil unmountDisk diskN), then press r."
+                "Press e to eject its volumes and read (macOS remounts them afterwards), \
+                 or r to retry."
             }
             Self::DemoFile(_) => "Press r to retry.",
         }

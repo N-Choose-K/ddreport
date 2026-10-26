@@ -31,6 +31,7 @@ sudo ddreport report /dev/sdb -o wd-red.pdf
 ddreport report --from-json saved.json         # from saved `smartctl -x --json`
 ddreport scan --usb                            # list USB mass-storage devices
 sudo ddreport report --usb 1f75:0611           # USB-SATA drive via native SAT backend
+sudo ddreport report --usb 1f75:0611 --unmount # eject its volumes first (macOS remounts them)
 ```
 
 `report` probes common USB bridge types (`sat`, `sat,12`, `sntjmicron`,
@@ -46,7 +47,9 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
   `vid:pid:serial` or `bus:addr` from `ddreport scan --usb`). It needs root:
   libusb takes the device from macOS's storage driver, so the drive disappears
   from macOS while it is read and is re-enumerated (remounted) afterwards.
-  The TUI lists USB bridges too and reads them this way when run with `sudo`.
+  The TUI lists USB drives too (name, disk and size come from the OS without
+  a read) and reads them this way under `sudo`; `e` ejects a mounted drive's
+  volumes and reads it. `--unmount` does the same on the CLI.
 - `--usb` refuses to run if the drive is mounted, used as swap, or open in any
   process (e.g. a wipe in progress); unmount it and stop such tools first.
   `--force` only skips checks that can't be completed (disk not found in the

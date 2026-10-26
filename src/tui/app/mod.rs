@@ -1,5 +1,6 @@
 //! UI state and pure update logic: keys and worker messages in, jobs out.
 
+mod eject;
 mod keys;
 mod selftest;
 #[cfg(test)]
@@ -74,6 +75,13 @@ pub enum Confirm {
 pub enum Modal {
     Help,
     Confirm(Confirm, TestTarget),
+    /// Eject a USB drive's volumes and read it through the native backend.
+    Eject {
+        key: String,
+        label: String,
+        bridge: String,
+        mounts: Vec<String>,
+    },
     Message {
         title: String,
         body: String,

@@ -139,3 +139,68 @@ fn self_test_refused_for_demo_files() {
     assert!(a.modal.is_none());
     assert!(a.status.as_ref().unwrap().error);
 }
+
+fn usb(mounts: &[&str]) -> Device {
+    Device::new(
+        DeviceSource::NativeUsb {
+            selector: "1f75:0611".parse().unwrap(),
+            bridge: "Hub".into(),
+            disk: Some(crate::native::UsbDisk {
+                bsd: "disk4".into(),
+                media_name: Some("CT1050MX300SSD1".into()),
+                size_bytes: Some(1_050_214_588_416),
+                mounts: mounts.iter().map(|m| m.to_string()).collect(),
+            }),
+        },
+        "USB disk4 1.05 TB",
+    )
+}
+
+#[test]
+fn eject_confirms_then_loads_with_unmount() {
+    let mut a = app();
+    let jobs = scanned(&mut a, vec![live("/dev/a"), usb(&["/Volumes/macOS"])]);
+    assert_eq!(jobs.len(), 2, "USB entries load on scan too");
+    assert_eq!(a.devices[1].source.label(), "CT1050MX300SSD1");
+
+    a.on_key(key('e'));
+    assert!(a.modal.is_none(), "smartctl drive selected");
+    assert!(a.status.as_ref().unwrap().error);
+
+    a.on_key(code(KeyCode::Down));
+    a.on_key(key('e'));
+    assert!(a.status.as_ref().unwrap().error, "read still in flight");
+    a.complete_load(
+        "usb:1f75:0611",
+        Err("its volumes are mounted".into()),
+        Instant::now(),
+    );
+    a.on_key(key('e'));
+    let Some(Modal::Eject { key: k, mounts, .. }) = &a.modal else {
+        panic!("expected eject modal, got {:?}", a.modal);
+    };
+    assert_eq!(k, "usb:1f75:0611");
+    assert_eq!(mounts, &["/Volumes/macOS"]);
+
+    a.on_key(key('n'));
+    assert!(a.modal.is_none());
+    a.on_key(key('e'));
+    let jobs = a.on_key(key('y'));
+    assert!(
+        matches!(jobs.as_slice(), [Job::Load { unmount: true, .. }]),
+        "{jobs:?}"
+    );
+    assert!(a.devices[1].loading());
+}
+
+#[test]
+fn rescan_cancels_eject_modal() {
+    let mut a = app();
+    scanned(&mut a, vec![usb(&[])]);
+    a.complete_load("usb:1f75:0611", Err("x".into()), Instant::now());
+    a.on_key(key('e'));
+    assert!(matches!(a.modal, Some(Modal::Eject { .. })));
+    a.on_key(key('R'));
+    a.on_msg(Msg::scanned(vec![usb(&[])]), Instant::now());
+    assert!(a.modal.is_none());
+}

@@ -3,7 +3,7 @@
 //! in progress). Detected use always refuses; `force` only skips checks that
 //! could not be completed (unmapped disk, missing lsof, no root).
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use super::UsbStorageDevice;
 
@@ -310,6 +310,50 @@ pub fn decide(blockers: &[String], unverified: &[String], force: bool) -> Result
         .iter()
         .map(|u| format!("busy check incomplete, continued with --force: {u}"))
         .collect())
+}
+
+/// BSD names of every disk below the USB device in the IORegistry.
+#[cfg(target_os = "macos")]
+pub fn macos_disks(dev: &UsbStorageDevice) -> Result<Vec<String>> {
+    let o = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-a", "-r", "-c", "IOUSBHostDevice", "-l"])
+        .output()
+        .context("running ioreg")?;
+    if !o.status.success() {
+        bail!("ioreg failed: {}", o.status);
+    }
+    ioreg_bsd_names(&o.stdout, dev)?
+        .ok_or_else(|| anyhow!("USB device not found in the IORegistry"))
+}
+
+/// Unmounts every volume on the device's disks. macOS remounts them when the
+/// device re-enumerates after the read.
+#[cfg(target_os = "macos")]
+pub fn unmount(dev: &UsbStorageDevice) -> Result<()> {
+    for disk in super::diskinfo::whole_disks(&macos_disks(dev)?) {
+        let o = std::process::Command::new("/usr/sbin/diskutil")
+            .args(["unmountDisk", &disk])
+            .output()
+            .context("running diskutil")?;
+        if !o.status.success() {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let out = String::from_utf8_lossy(&o.stdout);
+            bail!(
+                "diskutil unmountDisk {disk}: {}",
+                err.trim()
+                    .lines()
+                    .chain(out.trim().lines())
+                    .last()
+                    .unwrap_or("failed")
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn unmount(_dev: &UsbStorageDevice) -> Result<()> {
+    bail!("unmounting before the read is only implemented on macOS")
 }
 
 /// Checks the device's disk is idle before its driver is detached.
