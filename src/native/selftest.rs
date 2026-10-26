@@ -26,9 +26,33 @@ fn subcommand(kind: TestKind) -> u8 {
     }
 }
 
-/// Starts (`kind` set) or aborts a self-test.
-pub fn run<T: ScsiTransport>(sat: &mut Sat<T>, kind: Option<TestKind>) -> Result<TestOutcome> {
+/// The drive a command was confirmed for: model and serial from IDENTIFY.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expected {
+    pub model: String,
+    pub serial: String,
+}
+
+/// Starts (`kind` set) or aborts a self-test. With `expected`, IDENTIFY must
+/// match before the command is sent: the selector alone can pick a swapped
+/// drive.
+pub fn run<T: ScsiTransport>(
+    sat: &mut Sat<T>,
+    kind: Option<TestKind>,
+    expected: Option<&Expected>,
+) -> Result<TestOutcome> {
     let id = ata::parse_identify(&sat.read(AtaCmd::Identify)?);
+    if let Some(e) = expected
+        && (id.model != e.model || id.serial != e.serial)
+    {
+        bail!(
+            "refused: the drive is {} (serial {}), confirmed {} (serial {})",
+            id.model,
+            id.serial,
+            e.model,
+            e.serial
+        );
+    }
     if !id.smart_supported {
         bail!("drive does not support SMART");
     }
@@ -83,9 +107,50 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_identity_sends_nothing() {
+        let mut sat = Sat::new(MockDrive::default());
+        let e = run(
+            &mut sat,
+            Some(TestKind::Short),
+            Some(&Expected {
+                model: "WDC WD80EFAX-68KNBN0".into(),
+                serial: "OTHER".into(),
+            }),
+        )
+        .unwrap_err();
+        assert!(e.to_string().starts_with("refused: the drive is"), "{e}");
+        assert!(offline_subcommands(&sat).is_empty());
+    }
+
+    #[test]
+    fn matching_identity_runs() {
+        let mut sat = Sat::new(MockDrive::default());
+        let probe = run(&mut sat, None, None).unwrap();
+        let out = run(
+            &mut sat,
+            Some(TestKind::Short),
+            Some(&Expected {
+                model: probe.model,
+                serial: probe.serial,
+            }),
+        )
+        .unwrap();
+        assert!(out.message.starts_with("Short self-test started"));
+    }
+
+    #[test]
+    fn recovered_error_sense_without_err_is_success() {
+        let mut sat = Sat::new(MockDrive {
+            offline_sense: true,
+            ..Default::default()
+        });
+        assert!(run(&mut sat, Some(TestKind::Short), None).is_ok());
+    }
+
+    #[test]
     fn start_identifies_then_sends_the_subcommand() {
         let mut sat = Sat::new(MockDrive::default());
-        let out = run(&mut sat, Some(TestKind::Long)).unwrap();
+        let out = run(&mut sat, Some(TestKind::Long), None).unwrap();
         assert_eq!(out.model, "WDC WD80EFAX-68KNBN0");
         assert!(!out.serial.is_empty());
         assert!(
@@ -104,7 +169,7 @@ mod tests {
     #[test]
     fn abort_sends_7f() {
         let mut sat = Sat::new(MockDrive::default());
-        let out = run(&mut sat, None).unwrap();
+        let out = run(&mut sat, None, None).unwrap();
         assert_eq!(out.message, "Self-test aborted");
         assert_eq!(offline_subcommands(&sat), [0x7f]);
     }
@@ -115,7 +180,7 @@ mod tests {
             offline_rejected: true,
             ..Default::default()
         });
-        let e = run(&mut sat, Some(TestKind::Short)).unwrap_err();
+        let e = run(&mut sat, Some(TestKind::Short), None).unwrap_err();
         assert!(
             format!("{e:#}").starts_with("self-test not started"),
             "{e:#}"

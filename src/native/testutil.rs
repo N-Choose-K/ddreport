@@ -272,6 +272,8 @@ pub struct MockDrive {
     pub status_aborted: bool,
     /// SMART EXECUTE OFF-LINE IMMEDIATE is refused (drive aborts it).
     pub offline_rejected: bool,
+    /// The bridge answers it with recovered-error sense carrying a clean status.
+    pub offline_sense: bool,
     /// SMART RETURN STATUS answers GOOD; registers come from REQUEST SENSE.
     pub status_via_request_sense: bool,
     pub pending_sense: Vec<u8>,
@@ -313,6 +315,7 @@ impl Default for MockDrive {
             reject_pt16: false,
             status_aborted: false,
             offline_rejected: false,
+            offline_sense: false,
             status_via_request_sense: false,
             pending_sense: Vec::new(),
             cdbs: Vec::new(),
@@ -374,6 +377,8 @@ impl MockDrive {
             (0xb0, 0xd4) => {
                 return if self.offline_rejected {
                     (0, Some(ata_desc_sense(0x4f, 0xc2, 0x51)))
+                } else if self.offline_sense {
+                    (0, Some(ata_desc_sense(0x4f, 0xc2, 0x50)))
                 } else {
                     (0, None)
                 };

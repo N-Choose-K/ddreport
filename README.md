@@ -27,7 +27,7 @@ printable certificate.
 ```sh
 ddreport scan                                  # list drives
 sudo ddreport test /dev/sdb long               # start an extended self-test
-sudo ddreport test --usb 1f75:0611 short --remount  # same over USB on macOS
+sudo ddreport test --usb 1f75:0611 short --remount  # same over USB (selector as for report)
 sudo ddreport report /dev/sdb -o wd-red.pdf
 ddreport report --from-json saved.json         # from saved `smartctl -x --json`
 ddreport scan --usb                            # list USB mass-storage devices

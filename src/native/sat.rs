@@ -291,17 +291,20 @@ impl<T: ScsiTransport> Sat<T> {
     }
 
     /// Runs a non-data command without CK_COND; only success or failure matters.
+    /// Some bridges return the ATA registers as recovered-error sense even on
+    /// success; that counts as success unless the ATA status has ERR set.
     pub fn non_data_plain(&mut self, cmd: AtaCmd) -> Result<()> {
         let (status, _, sense) = self.exec(&cmd.taskfile(), &mut [], false)?;
         if status != ScsiStatus::CheckCondition {
             return Ok(());
         }
-        match sense {
-            Some(s) => match s.ata {
-                Some(a) if a.is_error() => Err(SatError::AtaAborted(a).into()),
-                _ => Err(SatError::Rejected(s).into()),
-            },
-            None => bail!("CHECK CONDITION without sense data"),
+        let Some(s) = sense else {
+            bail!("CHECK CONDITION without sense data");
+        };
+        match s.ata {
+            Some(a) if a.is_error() => Err(SatError::AtaAborted(a).into()),
+            Some(_) if matches!(s.key, scsi::KEY_NO_SENSE | scsi::KEY_RECOVERED_ERROR) => Ok(()),
+            _ => Err(SatError::Rejected(s).into()),
         }
     }
 
