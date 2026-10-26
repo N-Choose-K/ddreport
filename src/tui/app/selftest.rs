@@ -1,12 +1,13 @@
 //! Self-test confirmation, commands and monitoring.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::smartctl::TestKind;
+use crate::tui::device::DeviceSource;
 use crate::tui::device::{Device, TestWatch};
-use crate::tui::worker::{Job, TestTarget};
+use crate::tui::worker::{Job, TestTarget, TestVia};
 
-use super::{App, Confirm, MAX_UNKNOWN_READS, Modal, TEST_KICK, TEST_POLL};
+use super::{App, Confirm, MAX_UNKNOWN_READS, Modal, TEST_KICK, TEST_POLL, USB_TEST_POLL};
 
 impl App {
     /// Starts monitoring after a command. Results from before a rescan apply to the
@@ -36,7 +37,7 @@ impl App {
             return self.error("No drive selected");
         };
         if let Some(why) = d.source.no_self_test_reason() {
-            return self.error(format!("Self-tests need a smartctl drive ({why})"));
+            return self.error(format!("Self-tests need a live drive ({why})"));
         }
         if self.test_cmd_busy.contains(&d.source.key()) {
             return self.error("A self-test command is already in flight");
@@ -55,10 +56,20 @@ impl App {
 
     pub(super) fn test_target(&self, d: &Device) -> Option<TestTarget> {
         let ident = d.report.as_ref().map(|r| &r.identity);
+        let via = match &d.source {
+            DeviceSource::Smartctl { path, .. } => TestVia::Smartctl {
+                path: path.clone(),
+                dev_type: self.test_dev_type(d),
+            },
+            DeviceSource::NativeUsb { selector, .. } => TestVia::NativeUsb {
+                selector: selector.clone(),
+            },
+            DeviceSource::DemoFile(_) => return None,
+        };
         Some(TestTarget {
             key: d.source.key(),
-            path: d.source.live_path()?.to_string(),
-            dev_type: self.test_dev_type(d),
+            label: d.source.label(),
+            via,
             generation: self.generation,
             model: ident.and_then(|i| i.model.clone()),
             serial: ident.and_then(|i| i.serial.clone()),
@@ -122,6 +133,7 @@ pub(super) fn schedule_after_read(
             unknown_reads: 0,
         });
     }
+    let poll = poll_interval(d);
     let Some(w) = d.watch.as_mut() else {
         d.next_refresh = None;
         return None;
@@ -129,7 +141,7 @@ pub(super) fn schedule_after_read(
     if !(ok && req >= w.first_req) {
         let delay = w.backoff;
         if !ok {
-            w.backoff = (w.backoff * 2).min(TEST_POLL);
+            w.backoff = (w.backoff * 2).min(poll);
         }
         d.next_refresh = Some(now + delay);
         return None;
@@ -156,15 +168,24 @@ pub(super) fn schedule_after_read(
             return Some("Drive does not report self-test status; stopped monitoring".into());
         }
         let delay = w.backoff;
-        w.backoff = (w.backoff * 2).min(TEST_POLL);
+        w.backoff = (w.backoff * 2).min(poll);
         d.next_refresh = Some(now + delay);
         return None;
     }
     w.unknown_reads = 0;
     w.serial = w.serial.take().or(have);
     w.backoff = TEST_KICK;
-    d.next_refresh = Some(now + TEST_POLL);
+    d.next_refresh = Some(now + poll);
     None
+}
+
+/// Progress reads through a USB bridge unmount and remount the drive each
+/// time, so they run less often.
+pub fn poll_interval(d: &Device) -> Duration {
+    match d.source {
+        DeviceSource::NativeUsb { .. } => USB_TEST_POLL,
+        _ => TEST_POLL,
+    }
 }
 
 /// The confirmed drive is still the one at its path: every captured field is
@@ -174,9 +195,5 @@ pub(super) fn still_confirmed(confirmed: &TestTarget, current: Option<&TestTarge
 }
 
 pub fn kind_name(k: TestKind) -> &'static str {
-    match k {
-        TestKind::Short => "Short",
-        TestKind::Long => "Extended",
-        TestKind::Conveyance => "Conveyance",
-    }
+    k.name()
 }

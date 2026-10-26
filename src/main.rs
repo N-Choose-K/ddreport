@@ -33,12 +33,21 @@ enum Cmd {
     Report(Box<ReportArgs>),
     /// Start or abort a SMART self-test.
     Test {
-        device: String,
+        #[arg(required_unless_present = "usb")]
+        device: Option<String>,
         #[arg(value_enum, default_value = "short")]
         kind: Kind,
         /// smartctl -d type (e.g. sat, sntjmicron).
-        #[arg(short = 'd', long)]
+        #[arg(short = 'd', long, conflicts_with = "usb")]
         device_type: Option<String>,
+        /// Send the command over USB directly (no smartctl); selector as for
+        /// `report --usb`. Needs root on macOS.
+        #[arg(long, value_name = "SELECTOR", conflicts_with = "device")]
+        usb: Option<String>,
+        /// With --usb: unmount the drive's volumes first; macOS mounts them
+        /// again afterwards.
+        #[arg(long, requires = "usb")]
+        remount: bool,
     },
 }
 
@@ -137,17 +146,26 @@ fn main() -> anyhow::Result<()> {
             device,
             kind,
             device_type,
+            usb,
+            remount,
         }) => {
-            let t = device_type.as_deref();
             let kind = match kind {
-                Kind::Abort => {
-                    smartctl::abort_self_test(&device, t)?;
-                    println!("Self-test aborted");
-                    return Ok(());
-                }
-                Kind::Short => TestKind::Short,
-                Kind::Long => TestKind::Long,
-                Kind::Conveyance => TestKind::Conveyance,
+                Kind::Abort => None,
+                Kind::Short => Some(TestKind::Short),
+                Kind::Long => Some(TestKind::Long),
+                Kind::Conveyance => Some(TestKind::Conveyance),
+            };
+            if let Some(sel) = usb {
+                let sel: UsbSelector = sel.parse()?;
+                println!("{}", native::self_test(&sel, kind, false, remount)?.message);
+                return Ok(());
+            }
+            let device = device.unwrap_or_default();
+            let t = device_type.as_deref();
+            let Some(kind) = kind else {
+                smartctl::abort_self_test(&device, t)?;
+                println!("Self-test aborted");
+                return Ok(());
             };
             println!("{}", smartctl::start_self_test(&device, t, kind)?);
             Ok(())

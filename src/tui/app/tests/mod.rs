@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::model::DriveReport;
 use crate::tui::TuiOptions;
 use crate::tui::device::DeviceSource;
-use crate::tui::worker::{Job, Msg, ScanOutcome, Ticket};
+use crate::tui::worker::{Job, Msg, ScanOutcome, TestVia, Ticket};
 
 use super::*;
 
