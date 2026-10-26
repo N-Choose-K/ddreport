@@ -112,9 +112,9 @@ impl App {
             Msg::TestAborted { target, result } => {
                 self.test_cmd_busy.retain(|k| *k != target.key);
                 match result {
-                    Ok(()) => {
+                    Ok(message) => {
                         self.kick_refresh(&target, now);
-                        self.info("Self-test aborted");
+                        self.info(message);
                     }
                     Err(e) => self.popup_error("Abort not confirmed", e),
                 }

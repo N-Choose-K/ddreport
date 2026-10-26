@@ -250,3 +250,26 @@ fn usb_drive_confirms_and_polls_with_remount() {
         "progress reads remount: {jobs:?}"
     );
 }
+
+#[test]
+fn unconfirmed_abort_message_is_shown() {
+    let mut a = app();
+    scanned(&mut a, vec![usb(&[])]);
+    let t0 = Instant::now();
+    loaded(&mut a, "usb:1f75:0611", with_serial("S9"), t0);
+    a.on_key(key('a'));
+    let target = start_target(a.on_key(key('y')));
+    a.on_msg(
+        Msg::TestAborted {
+            target,
+            result: Ok(
+                "Abort sent; this bridge never acknowledges, the next read will confirm".into(),
+            ),
+        },
+        t0,
+    );
+    let s = a.status.as_ref().unwrap();
+    assert!(!s.error);
+    assert!(s.text.starts_with("Abort sent"), "{}", s.text);
+    assert!(a.devices[0].watch.is_some(), "monitoring confirms it");
+}
