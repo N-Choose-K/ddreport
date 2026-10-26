@@ -24,10 +24,15 @@ printable certificate.
 
 ## Install with Nix
 
-The repo is a flake; `nix run github:nortagawa/ddreport` runs it and
-`nix profile install github:nortagawa/ddreport` installs it. The package wraps
-`smartctl` onto its PATH. Fonts are in Git LFS, so a flake input that fetches
-over git needs `?lfs=1` on the URL.
+The repo is a flake. The fonts are Git LFS objects, so fetch over git with
+`lfs=1`; the `github:` fetcher returns LFS pointers and the build embeds them.
+
+```sh
+nix run 'git+ssh://git@github.com/nortagawa/ddreport?lfs=1' -- --help
+nix profile install 'git+ssh://git@github.com/nortagawa/ddreport?lfs=1'
+```
+
+The package wraps `smartctl` onto its PATH.
 
 ## Usage
 
