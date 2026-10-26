@@ -39,6 +39,10 @@ pub struct Quirks {
     /// SMART RETURN STATUS (non-data, CK_COND) wedges the bridge until it is
     /// re-enumerated. SMART status comes from the attribute thresholds.
     pub no_return_status: bool,
+    /// Non-data commands reach the drive but the bridge never sends the CSW
+    /// and is wedged until re-enumerated. Such commands get a short timeout
+    /// and count as sent, unconfirmed.
+    pub silent_non_data: bool,
 }
 
 pub fn quirks(vid: u16, pid: u16) -> Quirks {
@@ -47,6 +51,7 @@ pub fn quirks(vid: u16, pid: u16) -> Quirks {
         // command fails until the device is re-enumerated.
         (0x1f75, 0x0611) => Quirks {
             no_return_status: true,
+            silent_non_data: true,
         },
         _ => Quirks::default(),
     }
