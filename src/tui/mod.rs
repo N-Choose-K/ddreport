@@ -12,7 +12,11 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
+use crossterm::execute;
 use ratatui::DefaultTerminal;
 
 pub use device::{Device, DeviceSource};
@@ -35,10 +39,33 @@ pub struct TuiOptions {
 
 pub fn run(opts: TuiOptions) -> anyhow::Result<()> {
     let mut terminal = ratatui::try_init()?;
+    enable_input();
     silence_worker_panics();
     let result = event_loop(&mut terminal, App::new(&opts));
+    disable_input();
     ratatui::restore();
     result
+}
+
+/// Mouse reporting, and unambiguous Esc where the terminal supports it.
+fn enable_input() {
+    let mut out = std::io::stdout();
+    let _ = execute!(out, EnableMouseCapture);
+    if matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    ) {
+        let _ = execute!(
+            out,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
+}
+
+fn disable_input() {
+    let mut out = std::io::stdout();
+    // Popping without a push is ignored by terminals.
+    let _ = execute!(out, PopKeyboardEnhancementFlags, DisableMouseCapture);
 }
 
 /// Worker panics are caught and shown in the UI; only main-thread panics may
@@ -47,6 +74,7 @@ fn silence_worker_panics() {
     let restore_and_report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if !worker::is_worker_thread() {
+            disable_input();
             restore_and_report(info);
         }
     }));
@@ -60,11 +88,12 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
     while !app.should_quit {
         terminal.draw(|f| ui::draw(f, &app))?;
         let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            spawn(app.on_key(key));
+        if event::poll(timeout)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => spawn(app.on_key(key)),
+                Event::Mouse(m) => app.on_mouse(m),
+                _ => {}
+            }
         }
         while let Ok(msg) = rx.try_recv() {
             spawn(app.on_msg(msg, Instant::now()));

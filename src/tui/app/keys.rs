@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::smartctl::TestKind;
 use crate::tui::worker::Job;
 
-use super::{App, Confirm, Modal, PAGE, Tab};
+use super::{App, Confirm, Focus, Modal, PAGE, Tab};
 
 impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Job> {
@@ -18,18 +18,28 @@ impl App {
             return self.on_modal_key(modal, key);
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('q') => self.should_quit = true,
+            // Esc only closes popups; arrow keys arrive as Esc sequences.
+            KeyCode::Esc => {}
             KeyCode::Char('?') => self.modal = Some(Modal::Help),
-            KeyCode::Up | KeyCode::Char('k') => self.select(self.selected.saturating_sub(1)),
-            KeyCode::Down | KeyCode::Char('j') => self.select(self.selected + 1),
+            KeyCode::Tab | KeyCode::BackTab => self.focus = self.focus.other(),
+            KeyCode::Enter => self.focus = Focus::Details,
+            KeyCode::Up | KeyCode::Char('k') => match self.focus {
+                Focus::Drives => self.select(self.selected.saturating_sub(1)),
+                Focus::Details => self.scroll_by(-1),
+            },
+            KeyCode::Down | KeyCode::Char('j') => match self.focus {
+                Focus::Drives => self.select(self.selected + 1),
+                Focus::Details => self.scroll_by(1),
+            },
             KeyCode::PageDown | KeyCode::Char('J') => self.scroll_by(PAGE as i32),
             KeyCode::Char('d') if ctrl => self.scroll_by(PAGE as i32),
             KeyCode::PageUp | KeyCode::Char('K') => self.scroll_by(-(PAGE as i32)),
             KeyCode::Char('u') if ctrl => self.scroll_by(-(PAGE as i32)),
             KeyCode::Home => self.scroll = 0,
             KeyCode::End => self.scroll = self.max_scroll.get(),
-            KeyCode::Tab | KeyCode::Right => self.set_tab(self.tab.step(1)),
-            KeyCode::BackTab | KeyCode::Left => self.set_tab(self.tab.step(-1)),
+            KeyCode::Right => self.set_tab(self.tab.step(1)),
+            KeyCode::Left => self.set_tab(self.tab.step(-1)),
             KeyCode::Char(c @ '1'..='5') => {
                 self.set_tab(Tab::ALL[c as usize - '1' as usize]);
             }
@@ -68,7 +78,7 @@ impl App {
         }
         vec![]
     }
-    fn select(&mut self, idx: usize) {
+    pub(super) fn select(&mut self, idx: usize) {
         let idx = idx.min(self.devices.len().saturating_sub(1));
         if idx != self.selected {
             self.selected = idx;
@@ -76,14 +86,14 @@ impl App {
         }
     }
 
-    fn set_tab(&mut self, tab: Tab) {
+    pub(super) fn set_tab(&mut self, tab: Tab) {
         if tab != self.tab {
             self.tab = tab;
             self.scroll = 0;
         }
     }
 
-    fn scroll_by(&mut self, delta: i32) {
+    pub(super) fn scroll_by(&mut self, delta: i32) {
         let max = i32::from(self.max_scroll.get());
         self.scroll = (i32::from(self.scroll) + delta).clamp(0, max) as u16;
     }

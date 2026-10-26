@@ -1,6 +1,7 @@
 //! UI state and pure update logic: keys and worker messages in, jobs out.
 
 mod keys;
+mod mouse;
 mod remount;
 mod selftest;
 #[cfg(test)]
@@ -10,6 +11,8 @@ mod worker_msgs;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use ratatui::layout::Rect;
 
 use crate::smartctl::TestKind;
 
@@ -65,6 +68,37 @@ impl Tab {
     }
 }
 
+/// Pane that receives ↑/↓.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    #[default]
+    Drives,
+    Details,
+}
+
+impl Focus {
+    fn other(self) -> Focus {
+        match self {
+            Focus::Drives => Focus::Details,
+            Focus::Details => Focus::Drives,
+        }
+    }
+}
+
+/// Screen regions from the last draw, for mouse hit testing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rects {
+    /// Inside the drive list border; two rows per device.
+    pub list: Rect,
+    /// First device shown in the list.
+    pub list_offset: usize,
+    pub tabs: Rect,
+    /// Column range of each tab title.
+    pub tab_spans: [(u16, u16); Tab::ALL.len()],
+    /// The detail pane including its border.
+    pub detail: Rect,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Confirm {
     Start(TestKind),
@@ -102,6 +136,9 @@ pub struct App {
     pub device_type: Option<String>,
     pub devices: Vec<Device>,
     pub selected: usize,
+    pub focus: Focus,
+    /// Written by the renderer.
+    pub rects: Cell<Rects>,
     pub tab: Tab,
     pub scroll: u16,
     /// Largest useful scroll for the current tab; written by the renderer.
@@ -127,6 +164,8 @@ impl App {
             device_type: opts.device_type.clone(),
             devices: Vec::new(),
             selected: 0,
+            focus: Focus::Drives,
+            rects: Cell::new(Rects::default()),
             tab: Tab::Overview,
             scroll: 0,
             max_scroll: Cell::new(u16::MAX),

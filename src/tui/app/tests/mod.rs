@@ -1,5 +1,6 @@
 mod confirm;
 mod monitoring;
+mod mouse;
 
 use std::time::Instant;
 
@@ -127,12 +128,12 @@ fn navigation_tabs_and_scroll() {
     assert_eq!(a.selected, 0);
     a.on_key(key('3'));
     assert_eq!(a.tab, Tab::SelfTests);
-    a.on_key(code(KeyCode::Tab));
-    a.on_key(code(KeyCode::Tab));
-    assert_eq!(a.tab, Tab::Json);
-    a.on_key(code(KeyCode::Tab));
-    assert_eq!(a.tab, Tab::Overview);
-    a.on_key(code(KeyCode::BackTab));
+    a.on_key(code(KeyCode::Right));
+    assert_eq!(a.tab, Tab::Statistics);
+    a.on_key(code(KeyCode::Right));
+    a.on_key(code(KeyCode::Right));
+    assert_eq!(a.tab, Tab::Overview, "wraps");
+    a.on_key(code(KeyCode::Left));
     assert_eq!(a.tab, Tab::Json);
     a.max_scroll.set(15);
     a.on_key(code(KeyCode::PageDown));
@@ -145,16 +146,42 @@ fn navigation_tabs_and_scroll() {
 }
 
 #[test]
+fn arrows_follow_the_focused_pane() {
+    let mut a = app();
+    scanned(&mut a, vec![live("/dev/a"), live("/dev/b")]);
+    a.max_scroll.set(15);
+    assert_eq!(a.focus, Focus::Drives);
+    a.on_key(code(KeyCode::Down));
+    assert_eq!((a.selected, a.scroll), (1, 0));
+    a.on_key(code(KeyCode::Tab));
+    assert_eq!(a.focus, Focus::Details);
+    a.on_key(code(KeyCode::Down));
+    a.on_key(key('j'));
+    assert_eq!((a.selected, a.scroll), (1, 2));
+    a.on_key(code(KeyCode::Up));
+    assert_eq!(a.scroll, 1);
+    a.on_key(code(KeyCode::BackTab));
+    assert_eq!(a.focus, Focus::Drives);
+    a.on_key(key('k'));
+    assert_eq!(a.selected, 0);
+    a.on_key(code(KeyCode::Enter));
+    assert_eq!(a.focus, Focus::Details);
+}
+
+#[test]
 fn quit_keys() {
-    for k in [key('q'), code(KeyCode::Esc)] {
-        let mut a = app();
-        a.on_key(k);
-        assert!(a.should_quit);
-    }
+    let mut a = app();
+    a.on_key(code(KeyCode::Esc));
+    assert!(!a.should_quit, "Esc never quits");
+    a.on_key(key('q'));
+    assert!(a.should_quit);
     let mut a = app();
     a.on_key(key('?'));
     a.on_key(code(KeyCode::Esc));
-    assert!(!a.should_quit, "Esc closes the overlay first");
+    assert!(
+        a.modal.is_none() && !a.should_quit,
+        "Esc closes the overlay"
+    );
     a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert!(a.should_quit);
 }
