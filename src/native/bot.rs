@@ -112,6 +112,19 @@ pub fn check_residue(
     Ok(())
 }
 
+/// The command went out but no CSW came back within the timeout. Some bridges
+/// never answer non-data commands even though the drive executes them.
+#[derive(Debug)]
+pub struct CswTimeout;
+
+impl std::fmt::Display for CswTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("reading CSW: timed out")
+    }
+}
+
+impl std::error::Error for CswTimeout {}
+
 /// Transport state after a failure: one retry after reset recovery, then every
 /// command is skipped, so a wedged bridge costs a single timeout.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,15 +162,19 @@ impl<P: BulkPipe> Bot<P> {
     }
 
     fn fail<T>(&mut self, msg: String) -> Result<T> {
+        self.note_failure(&msg);
+        bail!("USB BOT: {msg}")
+    }
+
+    fn note_failure(&mut self, msg: &str) {
         match &self.health {
             Health::Ok => {
                 self.reset_recovery();
-                self.health = Health::Recovered(msg.clone());
+                self.health = Health::Recovered(msg.to_owned());
             }
             Health::Recovered(first) => self.health = Health::Dead(first.clone()),
             Health::Dead(_) => {}
         }
-        bail!("USB BOT: {msg}")
     }
 
     fn read_csw(&mut self, timeout: Duration) -> Result<Csw> {
@@ -172,6 +189,12 @@ impl<P: BulkPipe> Bot<P> {
                     if let Err(e) = self.pipe.clear_halt_in() {
                         return self.fail(format!("clear halt before CSW: {e}"));
                     }
+                }
+                Err(PipeError::Timeout) => {
+                    self.note_failure(&CswTimeout.to_string());
+                    return Err(
+                        anyhow::Error::new(CswTimeout).context("USB BOT: reading CSW: timed out")
+                    );
                 }
                 Err(e) => return self.fail(format!("reading CSW: {e}")),
             }

@@ -274,6 +274,8 @@ pub struct MockDrive {
     pub offline_rejected: bool,
     /// The bridge answers it with recovered-error sense carrying a clean status.
     pub offline_sense: bool,
+    /// The bridge never answers it (CSW timeout).
+    pub offline_no_csw: bool,
     /// SMART RETURN STATUS answers GOOD; registers come from REQUEST SENSE.
     pub status_via_request_sense: bool,
     pub pending_sense: Vec<u8>,
@@ -316,6 +318,7 @@ impl Default for MockDrive {
             status_aborted: false,
             offline_rejected: false,
             offline_sense: false,
+            offline_no_csw: false,
             status_via_request_sense: false,
             pending_sense: Vec::new(),
             cdbs: Vec::new(),
@@ -440,6 +443,10 @@ impl ScsiTransport for MockDrive {
                 transferred: n,
                 sense: Vec::new(),
             });
+        }
+        if self.offline_no_csw && cdb[0] == 0x85 && cdb[4] == 0xd4 {
+            return Err(anyhow::Error::new(crate::native::bot::CswTimeout)
+                .context("USB BOT: reading CSW: timed out"));
         }
         let (transferred, mut sense) = self.respond(cdb, data);
         let is_return_status = cdb[0] == 0x85 && cdb[4] == 0xda;

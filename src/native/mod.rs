@@ -272,8 +272,9 @@ pub fn self_test(
 ) -> Result<TestOutcome> {
     let devs = list_devices()?;
     let dev = select(&devs, sel)?;
+    let quirks = bridges::quirks(dev.vendor_id, dev.product_id);
     let (out, _) = usb::with_sat(dev, force, unmount, |sat| {
-        selftest::run(sat, kind, expected)
+        selftest::run(sat, kind, expected, quirks)
     })?;
     Ok(out)
 }
