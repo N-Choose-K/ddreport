@@ -6,7 +6,7 @@
 
 const SECTOR: usize = 512;
 
-/// IDENTIFY DEVICE word numbers (ACS-4 table 45). Ranges are inclusive.
+/// IDENTIFY DEVICE word numbers (ACS-4 IDENTIFY DEVICE data). Ranges are inclusive.
 mod id {
     pub const SERIAL: (usize, usize) = (10, 19);
     pub const FIRMWARE: (usize, usize) = (23, 26);
@@ -50,8 +50,13 @@ mod id {
     pub const LOGICAL_SECTOR_LONGER_THAN_256_WORDS: u16 = 1 << 12;
     pub const MULTIPLE_LOGICAL_PER_PHYSICAL: u16 = 1 << 13;
     pub const LOGICAL_PER_PHYSICAL_EXP_MASK: u16 = 0x0f;
-    /// Words 108..=111: world wide name (NAA 4 bits, OUI 24 bits, unique ID 36 bits).
+    /// Words 108..=111: 64-bit world wide name, most significant word first.
+    /// Bits 63:60 = NAA, 59:36 = OUI, 35:0 = unique ID.
     pub const WWN: usize = 108;
+    pub const WWN_NAA_SHIFT: u64 = 60;
+    pub const WWN_OUI_SHIFT: u64 = 36;
+    pub const WWN_OUI_MASK: u64 = (1 << 24) - 1;
+    pub const WWN_ID_MASK: u64 = (1 << 36) - 1;
     /// Words 117..=118: logical sector size in words.
     pub const LOGICAL_SECTOR_WORDS: usize = 117;
     pub const MIN_LOGICAL_SECTOR_WORDS: u32 = 256;
@@ -80,7 +85,7 @@ mod id {
     pub const INTEGRITY_SIGNATURE: u16 = 0xa5;
 }
 
-/// SMART READ DATA byte offsets (ACS-4 table 164 / ATA8-ACS 7.53.6).
+/// SMART READ DATA byte offsets (ACS-4 SMART READ DATA).
 mod sd {
     pub const REVISION_WORD: usize = 0;
     pub const ATTRS: usize = 2;
@@ -210,8 +215,11 @@ fn valid(w: u16) -> bool {
 }
 
 /// Words 83, 84, 87, 106, ...: contents are valid only when bit 15 is clear and bit 14 is set.
+const VALID_PATTERN_MASK: u16 = 0xc000;
+const VALID_PATTERN: u16 = 0x4000;
+
 fn pattern_valid(w: u16) -> bool {
-    w & 0xc000 == 0x4000
+    w & VALID_PATTERN_MASK == VALID_PATTERN
 }
 
 /// ATA string from words `first..=last`: each word holds two chars, high byte first.
@@ -403,7 +411,7 @@ pub fn ata_major_name(w80: u16) -> Option<&'static str> {
 }
 
 /// smartctl-style ATA version string from words 80/81. Minor codes are the
-/// ACS-4 table 47 values smartctl prints by name.
+/// ACS-4 minor version codes smartctl prints by name.
 pub fn ata_version_string(w80: u16, w81: u16) -> Option<String> {
     let minor = match w81 {
         0x0028 => Some("ATA8-ACS T13/1699-D revision 6"),
@@ -571,15 +579,19 @@ pub fn attr_flags_string(f: u16) -> String {
 }
 
 /// Self-test status byte: high nibble = status, low nibble = tenths remaining.
+const SELF_TEST_STATUS_SHIFT: u8 = 4;
+const SELF_TEST_REMAINING_MASK: u8 = 0x0f;
+
 pub fn self_test_status_nibble(v: u8) -> u8 {
-    v >> 4
+    v >> SELF_TEST_STATUS_SHIFT
 }
 
 pub const SELF_TEST_IN_PROGRESS: u8 = 15;
 
 /// Percent of a running self-test left, from the low nibble (tenths).
 pub fn self_test_remaining_percent(v: u8) -> Option<u32> {
-    (self_test_status_nibble(v) == SELF_TEST_IN_PROGRESS).then(|| (v & 0x0f) as u32 * 10)
+    (self_test_status_nibble(v) == SELF_TEST_IN_PROGRESS)
+        .then(|| (v & SELF_TEST_REMAINING_MASK) as u32 * 10)
 }
 
 /// smartctl text for the SMART data self-test execution status byte.
@@ -594,7 +606,7 @@ pub fn self_test_exec_string(v: u8) -> String {
         6 => "completed having the servo (and/or seek) test element of the test failed".into(),
         7 => "completed having the read element of the test failed".into(),
         8 => "completed having a test element that failed and the device is suspected of having handling damage".into(),
-        SELF_TEST_IN_PROGRESS => format!("in progress, {}0% remaining", v & 0x0f),
+        SELF_TEST_IN_PROGRESS => format!("in progress, {}0% remaining", v & SELF_TEST_REMAINING_MASK),
         s => format!("unknown status (0x{s:x})"),
     }
 }
