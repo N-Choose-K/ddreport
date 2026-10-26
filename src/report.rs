@@ -4,6 +4,7 @@ use anyhow::Context;
 use sha2::{Digest, Sha256};
 
 use crate::model::DriveReport;
+use crate::native::{self, UsbSelector};
 use crate::{bridge, health, smartctl};
 
 #[derive(Debug, Clone, Default)]
@@ -30,6 +31,20 @@ pub fn from_smartctl_json(raw: &str, device_path: &str) -> anyhow::Result<DriveR
     stamp(&mut r, raw.as_bytes(), device_path);
     r.verdict = health::evaluate(&r);
     Ok(r)
+}
+
+/// Reads a USB-SATA drive through the native SAT backend and grades it.
+/// Returns the report and the raw smartctl-shaped JSON it was built from.
+/// `force` only skips busy-disk checks that cannot be completed.
+pub fn from_native(sel: &UsbSelector, force: bool) -> anyhow::Result<(DriveReport, String)> {
+    let res = native::read_smart(sel, force)?;
+    let raw = serde_json::to_string_pretty(&res.json)?;
+    let mut r = from_smartctl_json(&raw, &sel.to_string())?;
+    r.bridge = Some(res.bridge);
+    r.meta.backend = "ddreport native USB (SAT)".into();
+    r.meta.device_type = "native-sat".into();
+    r.verdict = health::evaluate(&r);
+    Ok((r, raw))
 }
 
 /// Fills report metadata; the SHA-256 ties the PDF to the exact raw data.

@@ -32,13 +32,14 @@ pub fn lookup(device: &str) -> Option<UsbBridge> {
         }
         if dir.join("idVendor").exists() {
             let hex = |f| read(&dir, f).and_then(|s| u16::from_str_radix(&s, 16).ok());
+            let (vendor_id, product_id) = (hex("idVendor")?, hex("idProduct")?);
             return Some(UsbBridge {
-                vendor_id: hex("idVendor")?,
-                product_id: hex("idProduct")?,
+                vendor_id,
+                product_id,
                 vendor_name: read(&dir, "manufacturer"),
                 product_name: read(&dir, "product"),
                 serial: read(&dir, "serial"),
-                chipset: None,
+                chipset: crate::native::bridges::chipset(vendor_id, product_id),
                 transport,
                 link_speed: read(&dir, "speed").map(|s| format!("{s} Mb/s")),
             });
