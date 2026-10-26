@@ -259,20 +259,22 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
     usb::list_devices()
 }
 
-pub use selftest::TestOutcome;
+pub use selftest::{Expected, TestOutcome};
 
 /// Starts (`kind` set) or aborts a self-test on the selected USB-SATA drive.
 /// Same capture rules as `read_smart`.
 pub fn self_test(
     sel: &UsbSelector,
     kind: Option<crate::smartctl::TestKind>,
+    expected: Option<&Expected>,
     force: bool,
     unmount: bool,
 ) -> Result<TestOutcome> {
     let devs = list_devices()?;
     let dev = select(&devs, sel)?;
-    #[allow(clippy::redundant_closure)]
-    let (out, _) = usb::with_sat(dev, force, unmount, |sat| selftest::run(sat, kind))?;
+    let (out, _) = usb::with_sat(dev, force, unmount, |sat| {
+        selftest::run(sat, kind, expected)
+    })?;
     Ok(out)
 }
 

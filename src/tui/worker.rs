@@ -111,10 +111,17 @@ fn self_test_command(target: &TestTarget, kind: Option<TestKind>) -> anyhow::Res
             };
             (out.message, out.model, out.serial)
         }
-        // One session: IDENTIFY then the command, so the identity check covers
-        // the same capture. Unmounts first; the OS mounts the volumes again.
+        // One session: IDENTIFY must match the confirmed drive before the
+        // command goes out. Unmounts first; the OS mounts the volumes again.
         TestVia::NativeUsb { selector } => {
-            let out = native::self_test(selector, kind, false, true)?;
+            let expected = match (&target.model, &target.serial) {
+                (Some(model), Some(serial)) => native::Expected {
+                    model: model.clone(),
+                    serial: serial.clone(),
+                },
+                _ => anyhow::bail!("refused: the confirmed drive's identity is unknown"),
+            };
+            let out = native::self_test(selector, kind, Some(&expected), false, true)?;
             (out.message, Some(out.model), Some(out.serial))
         }
     };
