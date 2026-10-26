@@ -65,6 +65,9 @@ impl Transport {
 pub struct UsbStorageDevice {
     pub bus: u8,
     pub address: u8,
+    /// macOS IORegistry locationID (bus and port path); survives re-enumeration,
+    /// which `address` does not. 0 elsewhere.
+    pub location: u32,
     pub vendor_id: u16,
     pub product_id: u16,
     pub manufacturer: Option<String>,
@@ -293,6 +296,7 @@ mod tests {
         UsbStorageDevice {
             bus,
             address,
+            location: 0,
             vendor_id: 0x1f75,
             product_id: 0x0611,
             manufacturer: None,

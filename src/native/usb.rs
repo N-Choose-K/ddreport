@@ -38,6 +38,7 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
         out.push(UsbStorageDevice {
             bus: bus_number(&info),
             address: info.device_address(),
+            location: location_id(&info),
             vendor_id: info.vendor_id(),
             product_id: info.product_id(),
             manufacturer: info.manufacturer_string().map(str::to_owned),
@@ -53,6 +54,19 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
         });
     }
     Ok(out)
+}
+
+/// IORegistry locationID on macOS; 0 elsewhere.
+fn location_id(info: &nusb::DeviceInfo) -> u32 {
+    #[cfg(target_os = "macos")]
+    {
+        info.location_id()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = info;
+        0
+    }
 }
 
 /// Bus number as libusb reports it.
@@ -166,17 +180,19 @@ impl Claim {
 
 impl Claim {
     /// Releases the interface and hands the device back to the OS driver.
+    /// The reattach stays armed for Drop until it has succeeded.
     fn release(mut self) -> Result<()> {
-        let reattach = std::mem::replace(&mut self.reattach, false);
-        self.handle
+        let released = self
+            .handle
             .release_interface(self.iface)
-            .context("releasing the interface")?;
-        if reattach {
+            .context("releasing the interface");
+        if self.reattach {
             self.handle
                 .attach_kernel_driver(self.iface)
                 .context("reattaching the OS driver")?;
+            self.reattach = false;
         }
-        Ok(())
+        released
     }
 }
 

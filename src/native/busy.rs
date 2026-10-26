@@ -218,8 +218,12 @@ fn find_usb_device<'a>(
         == Some("IOUSBHostDevice")
         && plist_uint(d, "idVendor") == Some(dev.vendor_id as u64)
         && plist_uint(d, "idProduct") == Some(dev.product_id as u64)
-        && (!match_address || plist_uint(d, "USB Address") == Some(dev.address as u64))
-        && plist_uint(d, "locationID").map(|l| (l >> 24) as u8) == Some(dev.bus);
+        && if match_address {
+            plist_uint(d, "USB Address") == Some(dev.address as u64)
+                && plist_uint(d, "locationID").map(|l| (l >> 24) as u8) == Some(dev.bus)
+        } else {
+            plist_uint(d, "locationID") == Some(dev.location as u64)
+        };
     if is_match {
         return Some(d);
     }
@@ -263,7 +267,8 @@ pub fn ioreg_bsd_names(xml: &[u8], dev: &UsbStorageDevice) -> Result<Option<Vec<
 }
 
 /// As `ioreg_bsd_names`; `match_address = false` finds the device by IDs and
-/// bus only, for after a re-enumeration has given it a new address.
+/// locationID (bus and port path), for after a re-enumeration has given it a
+/// new address.
 pub fn ioreg_bsd_names_by(
     xml: &[u8],
     dev: &UsbStorageDevice,
@@ -868,6 +873,7 @@ mod tests {
         UsbStorageDevice {
             bus: 0,
             address: 13,
+            location: 0x243000,
             vendor_id: 0x1f75,
             product_id: 0x0611,
             manufacturer: None,
@@ -990,7 +996,16 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             names,
-            "after re-enumeration the address differs"
+            "after re-enumeration the address differs; the port does not"
+        );
+        let twin = UsbStorageDevice {
+            location: 0x244000,
+            ..dev()
+        };
+        assert_eq!(
+            ioreg_bsd_names_by(IOREG.as_bytes(), &twin, false).unwrap(),
+            None,
+            "an identical bridge on another port does not match"
         );
         assert!(ioreg_bsd_names(b"not xml", &dev()).is_err());
     }
