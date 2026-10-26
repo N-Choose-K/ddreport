@@ -26,6 +26,8 @@ pub use selftest::kind_name;
 pub const MAX_UNKNOWN_READS: u8 = 5;
 /// Reload cadence while a self-test runs.
 pub const TEST_POLL: Duration = Duration::from_secs(30);
+/// Same through a USB bridge, where every read unmounts and remounts the drive.
+pub const USB_TEST_POLL: Duration = Duration::from_secs(60);
 /// First reload after starting or aborting a test.
 const TEST_KICK: Duration = Duration::from_secs(3);
 const PAGE: u16 = 10;

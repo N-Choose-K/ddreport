@@ -26,8 +26,11 @@ fn confirmation_needs_known_identity() {
 fn still_confirmed_compares_every_field() {
     let t = TestTarget {
         key: "smartctl:/dev/a".into(),
-        path: "/dev/a".into(),
-        dev_type: Some("sat".into()),
+        label: "/dev/a".into(),
+        via: TestVia::Smartctl {
+            path: "/dev/a".into(),
+            dev_type: Some("sat".into()),
+        },
         generation: 2,
         model: Some("M".into()),
         serial: Some("S".into()),
@@ -35,8 +38,18 @@ fn still_confirmed_compares_every_field() {
     assert!(still_confirmed(&t, Some(&t.clone())));
     assert!(!still_confirmed(&t, None));
     let changed: [fn(&mut TestTarget); 5] = [
-        |t| t.path = "/dev/b".into(),
-        |t| t.dev_type = Some("nvme".into()),
+        |t| {
+            t.via = TestVia::Smartctl {
+                path: "/dev/b".into(),
+                dev_type: Some("sat".into()),
+            }
+        },
+        |t| {
+            t.via = TestVia::Smartctl {
+                path: "/dev/a".into(),
+                dev_type: Some("nvme".into()),
+            }
+        },
         |t| t.generation = 3,
         |t| t.model = Some("Other".into()),
         |t| t.serial = Some("S2".into()),
@@ -66,7 +79,7 @@ fn confirmation_cancelled_when_drive_list_changes() {
     let Some(Modal::Confirm(_, t)) = &a.modal else {
         panic!("expected confirmation");
     };
-    assert_eq!(t.path, "/dev/b");
+    assert_eq!(t.label, "/dev/b");
     assert_eq!(t.serial.as_deref(), Some("B1"));
     a.on_msg(
         Msg::scanned(vec![live("/dev/b"), live("/dev/a")]),
@@ -119,8 +132,13 @@ fn self_test_needs_confirmation() {
     let [Job::StartTest { target, kind }] = jobs.as_slice() else {
         panic!("expected StartTest, got {jobs:?}");
     };
-    assert_eq!(target.path, "/dev/a");
-    assert_eq!(target.dev_type.as_deref(), Some("sntjmicron"));
+    assert_eq!(
+        target.via,
+        TestVia::Smartctl {
+            path: "/dev/a".into(),
+            dev_type: Some("sntjmicron".into()),
+        }
+    );
     assert_eq!(*kind, TestKind::Long);
 
     a.on_key(key('a'));
@@ -203,4 +221,32 @@ fn rescan_cancels_remount_modal() {
     a.on_key(key('R'));
     a.on_msg(Msg::scanned(vec![usb(&[])]), Instant::now());
     assert!(a.modal.is_none());
+}
+
+#[test]
+fn usb_drive_confirms_and_polls_with_remount() {
+    let mut a = app();
+    scanned(&mut a, vec![usb(&["/Volumes/x"])]);
+    let t0 = Instant::now();
+    loaded(&mut a, "usb:1f75:0611", with_serial("S9"), t0);
+    a.on_key(key('s'));
+    let Some(Modal::Confirm(_, t)) = &a.modal else {
+        panic!("expected confirmation, got {:?}", a.modal);
+    };
+    assert_eq!(t.label, "CT1050MX300SSD1");
+    assert!(matches!(t.via, TestVia::NativeUsb { .. }));
+    let target = start_target(a.on_key(key('y')));
+    a.on_msg(
+        Msg::TestStarted {
+            target: target.clone(),
+            kind: TestKind::Short,
+            result: Ok("Short self-test started".into()),
+        },
+        t0,
+    );
+    let jobs = a.on_tick(t0 + TEST_KICK);
+    assert!(
+        matches!(jobs.as_slice(), [Job::Load { remount: true, .. }]),
+        "progress reads remount: {jobs:?}"
+    );
 }

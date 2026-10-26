@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use crate::smartctl::TestKind;
 use crate::tui::app::{Confirm, Modal, kind_name};
+use crate::tui::worker::TestVia;
 
 use super::text::wrap_all;
 
@@ -41,7 +42,7 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
             f.render_widget(Paragraph::new(lines), inner);
         }
         Modal::Confirm(c, target) => {
-            let label = &target.path;
+            let label = &target.label;
             let ident = [target.model.clone(), target.serial.clone()]
                 .into_iter()
                 .flatten()
@@ -66,6 +67,14 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
                     "The log will record the test as aborted by host.",
                 ),
             };
+            let note = match target.via {
+                TestVia::NativeUsb { .. } => format!(
+                    "{note} The drive is unmounted for a few seconds to send the command and \
+                     again about once a minute to read progress; macOS mounts it again each \
+                     time."
+                ),
+                TestVia::Smartctl { .. } => note.to_string(),
+            };
             let text = vec![
                 Line::from(question).bold(),
                 Line::from(ident).dim(),
@@ -79,7 +88,12 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
                     Span::raw(" no"),
                 ]),
             ];
-            let inner = popup(f, area, 60, 10, "Confirm", Color::Yellow);
+            let h = if matches!(target.via, TestVia::NativeUsb { .. }) {
+                14
+            } else {
+                10
+            };
+            let inner = popup(f, area, 60, h, "Confirm", Color::Yellow);
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
         }
         Modal::Remount {

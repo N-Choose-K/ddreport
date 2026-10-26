@@ -28,6 +28,14 @@ pub enum TestKind {
 }
 
 impl TestKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            TestKind::Short => "Short",
+            TestKind::Long => "Extended",
+            TestKind::Conveyance => "Conveyance",
+        }
+    }
+
     fn arg(self) -> &'static str {
         match self {
             TestKind::Short => "short",

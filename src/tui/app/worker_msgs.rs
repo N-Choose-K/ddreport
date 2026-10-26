@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use crate::tui::device::DeviceSource;
 use crate::tui::worker::{Job, Msg, ScanOutcome, Ticket};
 
 use super::selftest::{kind_name, schedule_after_read};
@@ -22,7 +23,13 @@ impl App {
             .filter(|(_, d)| !d.loading() && d.next_refresh.is_some_and(|t| t <= now))
             .map(|(i, _)| i)
             .collect();
-        due.into_iter().filter_map(|i| self.load(i)).collect()
+        // Progress reads through a bridge remount the drive themselves.
+        due.into_iter()
+            .filter_map(|i| {
+                let remount = matches!(self.devices[i].source, DeviceSource::NativeUsb { .. });
+                self.load_with(i, remount)
+            })
+            .collect()
     }
     pub fn on_msg(&mut self, msg: Msg, now: Instant) -> Vec<Job> {
         match msg {

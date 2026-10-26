@@ -270,6 +270,8 @@ pub struct MockDrive {
     pub reject_pt16: bool,
     /// SMART RETURN STATUS sets ATA ERR/ABRT while echoing the signature.
     pub status_aborted: bool,
+    /// SMART EXECUTE OFF-LINE IMMEDIATE is refused (drive aborts it).
+    pub offline_rejected: bool,
     /// SMART RETURN STATUS answers GOOD; registers come from REQUEST SENSE.
     pub status_via_request_sense: bool,
     pub pending_sense: Vec<u8>,
@@ -310,6 +312,7 @@ impl Default for MockDrive {
             error_log,
             reject_pt16: false,
             status_aborted: false,
+            offline_rejected: false,
             status_via_request_sense: false,
             pending_sense: Vec::new(),
             cdbs: Vec::new(),
@@ -367,6 +370,13 @@ impl MockDrive {
                 };
                 let status = if self.status_aborted { 0x51 } else { 0x50 };
                 return (0, Some(ata_desc_sense(m, h, status)));
+            }
+            (0xb0, 0xd4) => {
+                return if self.offline_rejected {
+                    (0, Some(ata_desc_sense(0x4f, 0xc2, 0x51)))
+                } else {
+                    (0, None)
+                };
             }
             (0xb0, 0xd5) => match lba_low {
                 0x00 => Some(self.smart_dir.clone()),
