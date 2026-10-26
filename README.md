@@ -22,6 +22,13 @@ printable certificate.
 - [smartmontools](https://www.smartmontools.org/) 7.0+ (`smartctl` on PATH, or set
   `DDREPORT_SMARTCTL`). Most commands need root.
 
+## Install with Nix
+
+The repo is a flake; `nix run github:nortagawa/ddreport` runs it and
+`nix profile install github:nortagawa/ddreport` installs it. The package wraps
+`smartctl` onto its PATH. Fonts are in Git LFS, so a flake input that fetches
+over git needs `?lfs=1` on the URL.
+
 ## Usage
 
 ```sh
