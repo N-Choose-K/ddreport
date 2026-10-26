@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 
 use crate::model::*;
 
@@ -318,4 +319,21 @@ fn fixtures_render_on_every_tab() {
         press(&mut app, KeyCode::Char('1'));
         screen(&app, 100, 30);
     }
+}
+
+#[test]
+fn rects_follow_the_layout_and_clear_when_too_small() {
+    let app = app_with_report();
+    render(&app, 100, 30);
+    let r = app.rects.get();
+    assert!(r.list.height > 0 && r.detail.width > 0);
+    assert_eq!(r.tabs.height, 1);
+    assert_eq!(r.tab_spans[0].0, r.tabs.x);
+    assert!(r.tab_spans[4].1 > r.tab_spans[3].1);
+    render(&app, 50, 10);
+    let r = app.rects.get();
+    assert_eq!(
+        (r.list, r.tabs, r.detail),
+        (Rect::default(), Rect::default(), Rect::default())
+    );
 }

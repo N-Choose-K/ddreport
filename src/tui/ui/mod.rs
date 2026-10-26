@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Paragraph, Tabs, Wrap};
 
 use crate::model::{Grade, Severity};
 
-use super::app::{App, Focus, Tab};
+use super::app::{App, Focus, Rects, Tab};
 use devices::draw_devices;
 use modal::draw_modal;
 use overview::overview_lines;
@@ -30,6 +30,8 @@ const LABEL_W: usize = 13;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
+    // Panes record their regions below; nothing is clickable until they do.
+    app.rects.set(Rects::default());
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         let msg = format!(
             "Terminal too small ({}x{}).\nNeed at least {MIN_WIDTH}x{MIN_HEIGHT}. q quits.",

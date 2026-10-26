@@ -25,8 +25,10 @@ impl App {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) if list => {
                 self.focus = Focus::Drives;
-                let idx = r.list_offset + usize::from(m.row - r.list.y) / 2;
-                if idx < self.devices.len() {
+                // Two rows per device; a trailing odd row shows nothing.
+                let row = usize::from(m.row - r.list.y) / 2;
+                let idx = r.list_offset + row;
+                if row < usize::from(r.list.height) / 2 && idx < self.devices.len() {
                     self.select(idx);
                 }
             }

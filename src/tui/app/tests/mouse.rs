@@ -42,6 +42,14 @@ fn click_selects_a_drive_and_focuses_the_list() {
     assert_eq!(a.selected, 2, "click below the last entry is ignored");
     a.on_mouse(mouse(CLICK, 0, 4));
     assert_eq!(a.selected, 2, "the border is not the list");
+    let mut r = a.rects.get();
+    r.list = Rect::new(1, 2, 24, 3);
+    r.list_offset = 0;
+    a.rects.set(r);
+    a.on_mouse(mouse(CLICK, 5, 4));
+    assert_eq!(a.selected, 2, "odd trailing row shows no device");
+    a.on_mouse(mouse(CLICK, 5, 3));
+    assert_eq!(a.selected, 0);
 }
 
 #[test]
