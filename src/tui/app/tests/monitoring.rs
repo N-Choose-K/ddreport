@@ -258,7 +258,7 @@ fn statusless_drive_stops_monitoring_after_abort() {
     a.on_msg(
         Msg::TestAborted {
             target,
-            result: Ok(()),
+            result: Ok("Self-test aborted".into()),
         },
         t0,
     );

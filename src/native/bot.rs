@@ -276,9 +276,12 @@ impl<P: BulkPipe> ScsiTransport for Bot<P> {
             Vec::new()
         } else {
             let mut buf = [0u8; scsi::SENSE_ALLOC as usize];
-            match self.exchange(&scsi::request_sense_cdb(), &mut buf, timeout)? {
-                (CSW_PASSED, n) => buf[..n].to_vec(),
-                _ => Vec::new(),
+            // A flat error: the command itself failed, so a CSW timeout here
+            // must not read as "sent but unacknowledged".
+            match self.exchange(&scsi::request_sense_cdb(), &mut buf, timeout) {
+                Ok((CSW_PASSED, n)) => buf[..n].to_vec(),
+                Ok(_) => Vec::new(),
+                Err(e) => bail!("command failed, then REQUEST SENSE: {e:#}"),
             }
         };
         Ok(ScsiOutcome {
@@ -389,6 +392,20 @@ mod tests {
             "the probe was sent; later commands were not"
         );
         assert_eq!(s.resets, 1, "one reset recovery, before the probe");
+    }
+
+    #[test]
+    fn sense_timeout_after_a_failed_command_is_a_plain_error() {
+        let mut s = Script::default();
+        s.ins.push_back(csw(1, 0, 1)); // command failed; REQUEST SENSE then times out
+        let mut bot = Bot::new(&mut s, 0);
+        let e = bot.execute(&[0x12, 0, 0, 0, 0, 0], &mut [], T).unwrap_err();
+        assert!(
+            e.to_string()
+                .starts_with("command failed, then REQUEST SENSE"),
+            "{e}"
+        );
+        assert!(e.chain().all(|c| c.downcast_ref::<CswTimeout>().is_none()));
     }
 
     #[test]

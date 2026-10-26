@@ -195,7 +195,8 @@ pub enum Msg {
     },
     TestAborted {
         target: TestTarget,
-        result: Result<(), String>,
+        /// The backend's message; it may say the abort is unconfirmed.
+        result: Result<String, String>,
     },
     Exported(Result<PathBuf, String>),
 }
@@ -241,7 +242,7 @@ pub fn run(job: Job) -> Msg {
             kind,
         },
         Job::AbortTest { target } => Msg::TestAborted {
-            result: guarded(|| self_test_command(&target, None).map(|_| ())),
+            result: guarded(|| self_test_command(&target, None)),
             target,
         },
         Job::Export { report, out_dir } => {
