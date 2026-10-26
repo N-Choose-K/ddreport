@@ -321,11 +321,11 @@ pub fn parse_identify(b: &[u8]) -> Identify {
     let wwn_words = [w(id::WWN), w(id::WWN + 1), w(id::WWN + 2), w(id::WWN + 3)];
     let wwn = (pattern_valid(w87) && w87 & id::WWN_64BIT != 0 && wwn_words.iter().any(|&x| x != 0))
         .then(|| {
-            let [w0, w1, w2, w3] = wwn_words;
+            let name = wwn_words.iter().fold(0u64, |a, &x| (a << 16) | x as u64);
             Wwn {
-                naa: (w0 >> 12) as u8,
-                oui: ((w0 as u32 & 0x0fff) << 12) | (w1 as u32 >> 4),
-                id: ((w1 as u64 & 0xf) << 32) | (w2 as u64) << 16 | w3 as u64,
+                naa: (name >> id::WWN_NAA_SHIFT) as u8,
+                oui: ((name >> id::WWN_OUI_SHIFT) & id::WWN_OUI_MASK) as u32,
+                id: name & id::WWN_ID_MASK,
             }
         });
 
