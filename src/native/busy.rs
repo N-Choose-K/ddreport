@@ -372,8 +372,9 @@ fn unmount_with(
 ) -> Result<Unmounted> {
     let mut done = Unmounted::new(remount);
     for d in disks {
-        unmount(d)?;
+        // Registered first: unmountDisk can fail after unmounting some volumes.
         done.disks.push(d.clone());
+        unmount(d)?;
     }
     Ok(done)
 }
@@ -922,8 +923,8 @@ mod tests {
         assert_eq!(e.to_string(), "busy");
         assert_eq!(
             remounted(),
-            ["disk4", "disk5"],
-            "the two that were unmounted"
+            ["disk4", "disk5", "disk6"],
+            "the failed disk too: it may be half unmounted"
         );
 
         let u = unmount_with(&disks, |_| Ok(()), record).unwrap();
