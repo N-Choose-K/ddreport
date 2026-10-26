@@ -312,12 +312,6 @@ pub fn decide(blockers: &[String], unverified: &[String], force: bool) -> Result
         .collect())
 }
 
-#[cfg(target_os = "macos")]
-fn is_root() -> bool {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() == 0 }
-}
-
 /// Checks the device's disk is idle before its driver is detached.
 #[cfg(target_os = "macos")]
 pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
@@ -377,7 +371,7 @@ pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
             Vec::new()
         }
     };
-    if !is_root() {
+    if !super::is_root() {
         unverified.push("not running as root; lsof cannot see other users' processes".into());
     }
     decide(

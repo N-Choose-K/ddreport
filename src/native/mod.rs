@@ -223,6 +223,12 @@ pub fn bridge_info(d: &UsbStorageDevice) -> UsbBridge {
     }
 }
 
+/// True when running with effective UID 0.
+pub fn is_root() -> bool {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
 /// Lists USB mass-storage devices from OS-cached descriptors. Sends nothing
 /// to any device.
 pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {

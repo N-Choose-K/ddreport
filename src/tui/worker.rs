@@ -6,6 +6,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use crate::model::DriveReport;
+use crate::native;
 use crate::report::{self, CollectOptions};
 use crate::smartctl::{self, TestKind};
 
@@ -232,7 +233,7 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
             skipped: skipped.iter().map(|p| p.display().to_string()).collect(),
         });
     }
-    Ok(smartctl::scan()?
+    let mut devices: Vec<Device> = smartctl::scan()?
         .into_iter()
         .map(|d| {
             let info = format!("{} {}", d.protocol, d.info).trim().to_string();
@@ -244,8 +245,33 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
                 info,
             )
         })
-        .collect::<Vec<_>>()
-        .into())
+        .collect();
+    // macOS smartctl cannot open USB bridges; list them for the native backend.
+    if cfg!(target_os = "macos") {
+        devices.extend(native::list_devices()?.iter().map(usb_device));
+    }
+    Ok(devices.into())
+}
+
+fn usb_device(d: &native::UsbStorageDevice) -> Device {
+    let selector = d.selector();
+    let name = d
+        .product
+        .clone()
+        .or_else(|| d.manufacturer.clone())
+        .unwrap_or_else(|| selector.clone());
+    let mut info = format!("USB {selector} [{}]", d.transport.as_str());
+    if let Some(s) = &d.speed {
+        info.push(' ');
+        info.push_str(s);
+    }
+    Device::new(
+        DeviceSource::NativeUsb {
+            selector: selector.parse().expect("selector() output parses"),
+            name,
+        },
+        info,
+    )
 }
 
 /// True for JSON that parses but is no single-drive report, e.g. `--scan-open`
@@ -263,6 +289,12 @@ fn load(source: &DeviceSource, device_type: Option<String>) -> anyhow::Result<Dr
             device: path.clone(),
             device_type,
         }),
+        DeviceSource::NativeUsb { selector, .. } => {
+            if cfg!(target_os = "macos") && !native::is_root() {
+                anyhow::bail!("needs root to read USB drives: run `sudo ddreport`");
+            }
+            report::from_native(selector, false).map(|(r, _)| r)
+        }
         DeviceSource::DemoFile(p) => {
             let raw = std::fs::read_to_string(p)
                 .map_err(|e| anyhow::anyhow!("reading {}: {e}", p.display()))?;
@@ -380,6 +412,64 @@ mod tests {
         assert_eq!(out.devices[0].source.label(), "sata_hdd_wd_red_usb");
         assert_eq!(out.skipped.len(), 1);
         assert!(out.skipped[0].ends_with("scan_open.json"));
+    }
+
+    #[test]
+    fn usb_device_names_and_selects_the_bridge() {
+        let dev = native::UsbStorageDevice {
+            bus: 0,
+            address: 13,
+            vendor_id: 0x1f75,
+            product_id: 0x0611,
+            manufacturer: Some("CalDigit, Inc".into()),
+            product: Some("TS4 HUB".into()),
+            serial: Some("2015".into()),
+            transport: native::Transport::Bot,
+            speed: Some("USB 3.x SuperSpeed (5 Gb/s)".into()),
+            interface: 0,
+        };
+        let d = usb_device(&dev);
+        assert_eq!(d.source.label(), "TS4 HUB");
+        assert_eq!(d.source.key(), "usb:1f75:0611:2015");
+        assert_eq!(
+            d.info,
+            "USB 1f75:0611:2015 [BOT] USB 3.x SuperSpeed (5 Gb/s)"
+        );
+        assert!(d.source.live_path().is_none());
+        assert!(d.source.no_self_test_reason().is_some());
+
+        let bare = native::UsbStorageDevice {
+            manufacturer: None,
+            product: None,
+            serial: None,
+            speed: None,
+            ..dev
+        };
+        let d = usb_device(&bare);
+        assert_eq!(d.source.label(), "1f75:0611");
+        assert_eq!(d.info, "USB 1f75:0611 [BOT]");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn usb_load_without_root_says_so() {
+        if native::is_root() {
+            return;
+        }
+        let Msg::Loaded { result, .. } = run(Job::Load {
+            ticket: Ticket {
+                generation: 0,
+                req: 0,
+            },
+            source: DeviceSource::NativeUsb {
+                selector: "ffff:ffff".parse().unwrap(),
+                name: "x".into(),
+            },
+            device_type: None,
+        }) else {
+            panic!("expected load result");
+        };
+        assert!(result.unwrap_err().contains("sudo ddreport"));
     }
 
     #[test]

@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::model::{DriveReport, Grade};
+use crate::native::UsbSelector;
 
-/// Where a device's report comes from. New backends (e.g. native USB) add a variant.
+/// Where a device's report comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceSource {
     /// Live drive read through smartctl.
@@ -13,6 +14,12 @@ pub enum DeviceSource {
         path: String,
         /// Type reported by `smartctl --scan-open`; informational only.
         scanned_type: String,
+    },
+    /// USB-SATA drive read through the native SAT backend (macOS, needs root).
+    NativeUsb {
+        selector: UsbSelector,
+        /// Bridge product name from the USB descriptors; the selector when absent.
+        name: String,
     },
     /// Saved `smartctl -x --json` output.
     DemoFile(PathBuf),
@@ -23,6 +30,7 @@ impl DeviceSource {
     pub fn key(&self) -> String {
         match self {
             Self::Smartctl { path, .. } => format!("smartctl:{path}"),
+            Self::NativeUsb { selector, .. } => format!("usb:{selector}"),
             Self::DemoFile(p) => format!("file:{}", p.display()),
         }
     }
@@ -30,6 +38,7 @@ impl DeviceSource {
     pub fn label(&self) -> String {
         match self {
             Self::Smartctl { path, .. } => path.clone(),
+            Self::NativeUsb { name, .. } => name.clone(),
             Self::DemoFile(p) => p
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -37,11 +46,31 @@ impl DeviceSource {
         }
     }
 
-    /// Device path for commands that act on live hardware.
+    /// Device path for smartctl commands that act on live hardware.
     pub fn live_path(&self) -> Option<&str> {
         match self {
             Self::Smartctl { path, .. } => Some(path),
-            Self::DemoFile(_) => None,
+            Self::NativeUsb { .. } | Self::DemoFile(_) => None,
+        }
+    }
+
+    /// Shown under a failed read.
+    pub fn retry_hint(&self) -> &'static str {
+        match self {
+            Self::Smartctl { .. } => "Press r to retry, or start ddreport with -d <type>.",
+            Self::NativeUsb { .. } => {
+                "Eject the drive's volumes (diskutil unmountDisk diskN), then press r."
+            }
+            Self::DemoFile(_) => "Press r to retry.",
+        }
+    }
+
+    /// Why self-tests cannot be started on this source; None when they can.
+    pub fn no_self_test_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Smartctl { .. } => None,
+            Self::NativeUsb { .. } => Some("the native USB backend only reads SMART data"),
+            Self::DemoFile(_) => Some("this is a saved file"),
         }
     }
 }

@@ -46,6 +46,7 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
   `vid:pid:serial` or `bus:addr` from `ddreport scan --usb`). It needs root:
   libusb takes the device from macOS's storage driver, so the drive disappears
   from macOS while it is read and is re-enumerated (remounted) afterwards.
+  The TUI lists USB bridges too and reads them this way when run with `sudo`.
 - `--usb` refuses to run if the drive is mounted, used as swap, or open in any
   process (e.g. a wipe in progress); unmount it and stop such tools first.
   `--force` only skips checks that can't be completed (disk not found in the

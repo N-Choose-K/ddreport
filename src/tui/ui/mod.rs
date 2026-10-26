@@ -162,12 +162,13 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
                 spinner(app),
                 d.source.label()
             )),
-            (Some(e), false) => Paragraph::new(vec![
-                Line::from("Could not read this drive:").red().bold(),
-                Line::from(e.as_str()),
-                Line::default(),
-                Line::from("Press r to retry, or start ddreport with -d <type>.").dim(),
-            ]),
+            (Some(e), false) => {
+                let mut lines = vec![Line::from("Could not read this drive:").red().bold()];
+                lines.extend(e.lines().map(Line::from));
+                lines.push(Line::default());
+                lines.push(Line::from(d.source.retry_hint()).dim());
+                Paragraph::new(lines)
+            }
             (None, false) => Paragraph::new("Not loaded yet. Press r.").dim(),
         };
         f.render_widget(p.wrap(Wrap { trim: false }), content);
