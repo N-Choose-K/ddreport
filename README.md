@@ -72,8 +72,9 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
 cargo install --git ssh://git@github.com/nortagawa/ddreport
 ```
 
-Re-run with `--force` to update. `smartctl` (smartmontools) must be on PATH
-for the smartctl backend. On macOS with a nix or Homebrew `cc` first on PATH,
+Update with `cargo install --force --git ssh://git@github.com/nortagawa/ddreport`
+(cargo skips a reinstall of the same version without `--force`). `smartctl`
+(smartmontools) must be on PATH for the smartctl backend. On macOS with a nix or Homebrew `cc` first on PATH,
 point cargo at Apple's toolchain in `~/.cargo/config.toml` (the repo's own
 `.cargo/config.toml` does not apply to `cargo install --git`):
 
@@ -81,8 +82,12 @@ point cargo at Apple's toolchain in `~/.cargo/config.toml` (the repo's own
 [target.aarch64-apple-darwin]
 linker = "/usr/bin/cc"
 
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/cc"
+
 [env]
 CC_aarch64_apple_darwin = "/usr/bin/cc"
+CC_x86_64_apple_darwin = "/usr/bin/cc"
 ```
 
 ## Development
