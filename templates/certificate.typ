@@ -16,7 +16,8 @@
 #let amber = rgb("#b86e00")
 #let red = rgb("#b42318")
 #let gray = luma(45%)
-#let grade-color = (PASS: green, CAUTION: amber, FAIL: red, UNKNOWN: gray).at(d.grade)
+#let grade-color-of(g) = (PASS: green, CAUTION: amber, FAIL: red, UNKNOWN: gray).at(g)
+#let grade-color = grade-color-of(d.grade)
 #let grade-word = (
   PASS: "Healthy",
   CAUTION: "Use with caution",
@@ -338,7 +339,17 @@
 
 #let footer = block(width: 100%, stroke: (top: 1pt + ink), inset: (top: 6pt))[
   #{
-      set text(size: 7pt)
+      set text(size: 6.4pt, fill: muted)
+      set par(leading: 0.4em, spacing: 0.3em)
+      text(weight: "bold", fill: ink)[How the grade is decided]
+      h(4pt)
+      d.rubric.map(r => [#text(weight: "bold", fill: grade-color-of(r.k))[#r.k:] #r.v]).join([ ])
+      v(1pt)
+      text(weight: "bold", fill: ink)[Sources]
+      h(4pt)
+      d.sources.enumerate().map(((i, s)) => [#str(i + 1). #s]).join([ ])
+      v(3pt)
+      set text(size: 7pt, fill: ink)
       text(weight: "bold")[Raw data SHA-256]
       h(4pt)
       text(font: mono, size: 6.4pt, if d.sha256 != "" { d.sha256 } else { "not available" })

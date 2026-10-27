@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use thousands::Separable;
 
 use crate::fmt::bytes_human;
+use crate::health;
 use std::sync::LazyLock;
 
 use anyhow::{Context, anyhow};
@@ -205,6 +206,8 @@ struct Display {
     stats: Listed<Kv>,
     warnings: Listed<String>,
     sha256: String,
+    rubric: Vec<Kv>,
+    sources: Vec<&'static str>,
     disclaimer: &'static str,
 }
 
@@ -408,6 +411,14 @@ fn build_display(r: &DriveReport, paper: Paper, level: usize) -> Display {
             lim.warnings,
         ),
         sha256: r.meta.raw_sha256.clone(),
+        rubric: health::RUBRIC
+            .iter()
+            .map(|(g, t)| Kv {
+                k: (*g).into(),
+                v: (*t).into(),
+            })
+            .collect(),
+        sources: health::SOURCES.to_vec(),
         disclaimer: DISCLAIMER,
     }
 }
@@ -599,7 +610,11 @@ fn tiles(id: &Identity, h: &Health) -> Vec<Tile> {
         t.push(zero_good_tile(
             "Pending sectors",
             h.pending_sectors,
-            Level::Bad,
+            if health::pending_escalated(h) {
+                Level::Bad
+            } else {
+                Level::Warn
+            },
         ));
         t.push(uncorrectable_tile(h));
         t.push(zero_good_tile(
@@ -675,7 +690,7 @@ fn uncorrectable_tile(h: &Health) -> Tile {
         (Some(_), None) => "offline scan".into(),
         _ => "reported to host".into(),
     };
-    let level = if worst == 0 { Level::Ok } else { Level::Bad };
+    let level = if worst == 0 { Level::Ok } else { Level::Warn };
     tile(LABEL, count(worst), sub, level)
 }
 
@@ -1087,7 +1102,7 @@ mod tests {
             ..Default::default()
         };
         let t = uncorrectable_tile(&h);
-        assert_eq!((t.value.as_str(), t.level), ("12", Level::Bad));
+        assert_eq!((t.value.as_str(), t.level), ("12", Level::Warn));
         assert_eq!(t.sub, "offline 0 / reported 12");
 
         let h = Health {
@@ -1103,7 +1118,7 @@ mod tests {
             ..Default::default()
         };
         let t = uncorrectable_tile(&h);
-        assert_eq!((t.value.as_str(), t.level), ("3", Level::Bad));
+        assert_eq!((t.value.as_str(), t.level), ("3", Level::Warn));
     }
 
     #[test]
