@@ -90,7 +90,11 @@ fn run_json(args: &[&str]) -> anyhow::Result<(String, Value)> {
 }
 
 /// Runs `cmd` and returns its stdout, killing its process group at `timeout`.
-fn run_with_deadline(mut cmd: Command, label: &str, timeout: Duration) -> anyhow::Result<String> {
+pub(crate) fn run_with_deadline(
+    mut cmd: Command,
+    label: &str,
+    timeout: Duration,
+) -> anyhow::Result<String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

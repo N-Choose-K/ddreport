@@ -295,7 +295,7 @@ pub fn read_smart(sel: &UsbSelector, force: bool, unmount: bool) -> Result<Nativ
         Ok(db) => c.drivedb = db,
         Err(e) => c.messages.push(Message {
             text: format!(
-                "smartctl drive database unavailable ({e}); built-in attribute names used"
+                "smartctl drive database unavailable ({e:#}); built-in attribute names used"
             ),
             severity: "information",
         }),

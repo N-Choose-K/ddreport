@@ -1,7 +1,11 @@
 //! Model family and vendor attribute names from the smartmontools drive
 //! database, via `smartctl -P showall MODEL FIRMWARE` (touches no device).
 
-use std::process::Stdio;
+use std::process::Command;
+use std::time::Duration;
+
+/// A database lookup reads no device; anything slower is a stuck smartctl.
+const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// One drivedb.h entry matched against a model/firmware pair.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,15 +24,17 @@ impl DbEntry {
     }
 }
 
-/// Runs smartctl and parses its answer. `Err` means smartctl could not run;
-/// `Ok(None)` means the drive has no entry.
-pub fn lookup(model: &str, firmware: &str) -> std::io::Result<Option<DbEntry>> {
-    let out = crate::smartctl::smartctl()
-        .args(["-P", "showall", model, firmware])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()?;
-    Ok(parse(&String::from_utf8_lossy(&out.stdout)))
+/// Runs smartctl and parses its answer. `Err` means smartctl could not run
+/// or hung; `Ok(None)` means the drive has no entry.
+pub fn lookup(model: &str, firmware: &str) -> anyhow::Result<Option<DbEntry>> {
+    let mut cmd = crate::smartctl::smartctl();
+    cmd.args(["-P", "showall", model, firmware]);
+    run(cmd, TIMEOUT)
+}
+
+fn run(cmd: Command, timeout: Duration) -> anyhow::Result<Option<DbEntry>> {
+    let out = crate::smartctl::run_with_deadline(cmd, "smartctl -P showall", timeout)?;
+    Ok(parse(&out))
 }
 
 /// Parses `smartctl -P showall` output.
@@ -102,6 +108,17 @@ ATTRIBUTE OPTIONS:  005 Reallocate_NAND_Blk_Cnt
         .unwrap();
         assert_eq!(e.family.as_deref(), Some("Western Digital Red Plus"));
         assert!(e.names.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hung_smartctl_times_out() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 30"]);
+        let t = std::time::Instant::now();
+        let err = run(cmd, Duration::from_secs(1)).unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+        assert!(t.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
