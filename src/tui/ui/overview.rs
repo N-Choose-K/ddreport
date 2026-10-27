@@ -186,7 +186,7 @@ fn identity_rows(r: &DriveReport) -> Vec<Kv> {
         kv("Form factor", i.form_factor.clone()),
         kv("Interface", Some(iface)),
         kv("Sectors", sectors),
-        kv("WWN", i.wwn.clone()),
+        kv("World Wide Name", i.wwn.clone()),
         kv("TRIM", i.trim_supported.map(yes_no)),
     ]
     .into_iter()
@@ -199,8 +199,19 @@ fn health_rows(r: &DriveReport) -> Vec<Kv> {
     let smart = match (h.smart_supported, h.smart_enabled, h.overall_passed) {
         (Some(false), _, _) => Some(("unsupported".to_string(), Color::Yellow)),
         (_, Some(false), _) => Some(("disabled".to_string(), Color::Yellow)),
-        (_, _, Some(true)) => Some(("PASSED".to_string(), Color::Green)),
-        (_, _, Some(false)) => Some(("FAILED".to_string(), Color::Red)),
+        (_, _, Some(p)) => {
+            let (word, color) = if p {
+                ("PASSED", Color::Green)
+            } else {
+                ("FAILED", Color::Red)
+            };
+            let text = if h.overall_by_attributes {
+                format!("{word} (attribute check)")
+            } else {
+                word.to_string()
+            };
+            Some((text, color))
+        }
         _ => None,
     }
     .map(|(s, c)| ("SMART status", s, Style::new().fg(c).bold()));

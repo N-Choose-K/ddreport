@@ -26,6 +26,7 @@ pub mod bridges;
 pub mod busy;
 pub mod collect;
 pub mod diskinfo;
+pub mod drivedb;
 pub mod json;
 pub mod sat;
 pub mod scsi;
@@ -290,6 +291,15 @@ pub fn read_smart(sel: &UsbSelector, force: bool, unmount: bool) -> Result<Nativ
     let quirks = bridges::quirks(dev.vendor_id, dev.product_id);
     let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat, quirks))?;
     c.messages.extend(notes);
+    match drivedb::lookup(&c.identify.model, &c.identify.firmware) {
+        Ok(db) => c.drivedb = db,
+        Err(e) => c.messages.push(Message {
+            text: format!(
+                "smartctl drive database unavailable ({e:#}); built-in attribute names used"
+            ),
+            severity: "information",
+        }),
+    }
     if c.pt_size == PtSize::Twelve {
         c.messages.push(Message {
             text: "bridge rejected ATA PASS-THROUGH(16); used PASS-THROUGH(12)".into(),

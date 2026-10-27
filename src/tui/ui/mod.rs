@@ -26,7 +26,7 @@ pub use text::fmt_capacity;
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const LABEL_W: usize = 13;
+const LABEL_W: usize = 16;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();

@@ -82,7 +82,10 @@ pub fn build(c: &Collected, name: &str, info_name: &str) -> Value {
             json!({ "naa": w.naa, "oui": w.oui, "id": w.id }),
         );
     }
-    insert(&mut m, "in_smartctl_database", json!(false));
+    if let Some(f) = c.drivedb.as_ref().and_then(|d| d.family.as_deref()) {
+        insert(&mut m, "model_family", json!(f));
+    }
+    insert(&mut m, "in_smartctl_database", json!(c.drivedb.is_some()));
     insert(
         &mut m,
         "user_capacity",
@@ -151,7 +154,11 @@ pub fn build(c: &Collected, name: &str, info_name: &str) -> Value {
         if !p {
             exit_status |= 1 << 3;
         }
-        insert(&mut m, "smart_status", json!({ "passed": p }));
+        let mut status = json!({ "passed": p });
+        if c.smart_status_from_attrs {
+            status["by_attributes"] = json!(true);
+        }
+        insert(&mut m, "smart_status", status);
     }
 
     let mut temp = Map::new();
@@ -223,7 +230,12 @@ pub fn build(c: &Collected, name: &str, info_name: &str) -> Value {
         let mut table = Vec::new();
         for a in &sd.attrs {
             let thresh = th.iter().find(|t| t.0 == a.id).map_or(0, |t| t.1);
-            let (name, fmt) = attr_names::lookup(a.id);
+            let (generic, fmt) = attr_names::lookup(a.id);
+            let name = c
+                .drivedb
+                .as_ref()
+                .and_then(|d| d.name(a.id))
+                .unwrap_or(generic);
             let wf = ata::when_failed(a.value, a.worst, thresh);
             let prefail = a.flags & 1 != 0;
             match wf {
@@ -559,6 +571,46 @@ mod tests {
             "standard log; extended duplicates it"
         );
         assert!(r.meta.warnings.is_empty(), "{:?}", r.meta.warnings);
+    }
+
+    #[test]
+    fn drivedb_names_family_and_attribute_status() {
+        let drive = MockDrive {
+            status_aborted: true,
+            ..Default::default()
+        };
+        let mut c = collect(
+            &mut Sat::new(drive),
+            super::super::bridges::Quirks::default(),
+        )
+        .unwrap();
+        c.drivedb = Some(super::super::drivedb::DbEntry {
+            family: Some("Test Family".into()),
+            names: vec![(5, "Reallocate_NAND_Blk_Cnt".into())],
+        });
+        let j = build(&c, "1f75:0611", "x");
+        assert_eq!(j["model_family"], "Test Family");
+        assert_eq!(j["in_smartctl_database"], true);
+        assert_eq!(j["smart_status"]["by_attributes"], true);
+        let table = j["ata_smart_attributes"]["table"].as_array().unwrap();
+        let name = |id: u64| {
+            table
+                .iter()
+                .find(|a| a["id"] == id)
+                .map(|a| a["name"].as_str().unwrap().to_string())
+        };
+        assert_eq!(name(5).as_deref(), Some("Reallocate_NAND_Blk_Cnt"));
+        assert_eq!(name(9).as_deref(), Some("Power_On_Hours"));
+        let raw = serde_json::to_string(&j).unwrap();
+        let r = crate::report::from_smartctl_json(&raw, "1f75:0611").unwrap();
+        assert!(r.health.overall_by_attributes);
+        assert_eq!(r.identity.model_family.as_deref(), Some("Test Family"));
+        assert_eq!(r.identity.in_drive_database, Some(true));
+        assert!(
+            !r.meta.warnings.iter().any(|w| w.contains("derived")),
+            "{:?}",
+            r.meta.warnings
+        );
     }
 
     #[test]

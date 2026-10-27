@@ -72,7 +72,7 @@ fn kill_group(child: &mut std::process::Child) {
 /// smartctl exit-status bits that mean no usable data (cmdline error, open failed).
 const FATAL_EXIT_BITS: i64 = 0b11;
 
-fn smartctl() -> Command {
+pub(crate) fn smartctl() -> Command {
     Command::new(std::env::var("DDREPORT_SMARTCTL").unwrap_or_else(|_| "smartctl".into()))
 }
 
@@ -90,7 +90,11 @@ fn run_json(args: &[&str]) -> anyhow::Result<(String, Value)> {
 }
 
 /// Runs `cmd` and returns its stdout, killing its process group at `timeout`.
-fn run_with_deadline(mut cmd: Command, label: &str, timeout: Duration) -> anyhow::Result<String> {
+pub(crate) fn run_with_deadline(
+    mut cmd: Command,
+    label: &str,
+    timeout: Duration,
+) -> anyhow::Result<String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -631,6 +635,7 @@ fn parse_health(j: &Value, id: &Identity, attrs: &[Attribute], stats: &[Stat]) -
         smart_supported: bool_at(j, "/smart_support/available"),
         smart_enabled: bool_at(j, "/smart_support/enabled"),
         overall_passed: bool_at(j, "/smart_status/passed"),
+        overall_by_attributes: bool_at(j, "/smart_status/by_attributes") == Some(true),
         power_on_hours: u64_at(j, "/power_on_time/hours")
             .or_else(|| nv("power_on_hours"))
             .or_else(|| named(attrs, 9, &["Power_On_Hours"])),

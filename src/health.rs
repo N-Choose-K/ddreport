@@ -188,16 +188,24 @@ fn smart_unavailable(r: &DriveReport) -> Option<&'static str> {
 }
 
 fn overall(h: &Health, f: &mut Findings) {
-    match h.overall_passed {
-        Some(true) => f.push(
+    match (h.overall_passed, h.overall_by_attributes) {
+        (Some(true), true) => f.push(
+            Severity::Good,
+            "SMART status PASSED by attribute check; this bridge cannot relay the drive's own verdict",
+        ),
+        (Some(false), true) => f.push(
+            Severity::Critical,
+            "SMART status FAILED by attribute check - an attribute is at or below its failure threshold",
+        ),
+        (Some(true), false) => f.push(
             Severity::Good,
             "Drive's built-in SMART self-assessment: PASSED",
         ),
-        Some(false) => f.push(
+        (Some(false), false) => f.push(
             Severity::Critical,
             "Drive's built-in SMART self-assessment: FAILED - the drive predicts its own failure",
         ),
-        None => f.push(
+        (None, _) => f.push(
             Severity::Info,
             "Drive's overall SMART self-assessment could not be read (common through USB \
              adapters); graded on individual values",
@@ -898,6 +906,19 @@ mod tests {
         let mut r = healthy_hdd();
         r.health.overall_passed = Some(false);
         assert_eq!(evaluate(&r).grade, Grade::Fail);
+    }
+
+    #[test]
+    fn overall_by_attributes_names_the_check() {
+        let mut r = healthy_hdd();
+        r.health.overall_by_attributes = true;
+        let v = evaluate(&r);
+        assert_eq!(v.grade, Grade::Pass);
+        assert!(has(&v, Severity::Good, "PASSED by attribute check"));
+        r.health.overall_passed = Some(false);
+        let v = evaluate(&r);
+        assert_eq!(v.grade, Grade::Fail);
+        assert!(has(&v, Severity::Critical, "FAILED by attribute check"));
     }
 
     #[test]
