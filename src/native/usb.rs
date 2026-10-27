@@ -35,15 +35,16 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
         }) else {
             continue;
         };
+        let strings = own_strings(&info);
         out.push(UsbStorageDevice {
             bus: bus_number(&info),
             address: info.device_address(),
             location: location_id(&info),
             vendor_id: info.vendor_id(),
             product_id: info.product_id(),
-            manufacturer: info.manufacturer_string().map(str::to_owned),
-            product: info.product_string().map(str::to_owned),
-            serial: info.serial_number().map(str::to_owned),
+            manufacturer: strings.manufacturer,
+            product: strings.product,
+            serial: strings.serial,
             transport: if iface.protocol() == PROTO_UAS {
                 Transport::Uas
             } else {
@@ -66,6 +67,97 @@ fn location_id(info: &nusb::DeviceInfo) -> u32 {
     {
         let _ = info;
         0
+    }
+}
+
+struct Strings {
+    manufacturer: Option<String>,
+    product: Option<String>,
+    serial: Option<String>,
+}
+
+/// String descriptors of the device itself. nusb's macOS lookup searches
+/// parent registry entries too, so a bridge without strings would inherit
+/// its hub's names; read the device's own entry instead.
+#[cfg(target_os = "macos")]
+fn own_strings(info: &nusb::DeviceInfo) -> Strings {
+    let entry = iokit::Entry::by_id(info.registry_entry_id());
+    let get = |keys: [&str; 2]| {
+        entry
+            .as_ref()
+            .and_then(|e| keys.iter().find_map(|k| e.string(k)))
+    };
+    Strings {
+        manufacturer: get(["kUSBVendorString", "USB Vendor Name"]),
+        product: get(["kUSBProductString", "USB Product Name"]),
+        serial: get(["kUSBSerialNumberString", "USB Serial Number"]),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn own_strings(info: &nusb::DeviceInfo) -> Strings {
+    Strings {
+        manufacturer: info.manufacturer_string().map(str::to_owned),
+        product: info.product_string().map(str::to_owned),
+        serial: info.serial_number().map(str::to_owned),
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod iokit {
+    use core_foundation::base::{CFType, TCFType, kCFAllocatorDefault};
+    use core_foundation::string::CFString;
+    use io_kit_sys::types::io_registry_entry_t;
+    use io_kit_sys::{
+        IOObjectRelease, IORegistryEntryCreateCFProperty, IORegistryEntryIDMatching,
+        IOServiceGetMatchingService, kIOMasterPortDefault,
+    };
+
+    /// One IORegistry entry, released on drop.
+    pub struct Entry(io_registry_entry_t);
+
+    impl Entry {
+        pub fn by_id(id: u64) -> Option<Self> {
+            // SAFETY: IOServiceGetMatchingService consumes the matching
+            // dictionary; a zero port means no match.
+            let port = unsafe {
+                let matching = IORegistryEntryIDMatching(id);
+                if matching.is_null() {
+                    return None;
+                }
+                IOServiceGetMatchingService(kIOMasterPortDefault, matching)
+            };
+            (port != 0).then_some(Self(port))
+        }
+
+        /// A string property of this entry only, never of its parents.
+        pub fn string(&self, key: &str) -> Option<String> {
+            let key = CFString::new(key);
+            // SAFETY: the entry is live until drop; a null result means no
+            // such property, otherwise we own one reference.
+            let raw = unsafe {
+                IORegistryEntryCreateCFProperty(
+                    self.0,
+                    key.as_concrete_TypeRef(),
+                    kCFAllocatorDefault,
+                    0,
+                )
+            };
+            if raw.is_null() {
+                return None;
+            }
+            let value = unsafe { CFType::wrap_under_create_rule(raw) };
+            value.downcast::<CFString>().map(|s| s.to_string())
+        }
+    }
+
+    impl Drop for Entry {
+        fn drop(&mut self) {
+            // SAFETY: we hold exactly one reference from the lookup.
+            unsafe {
+                IOObjectRelease(self.0);
+            }
+        }
     }
 }
 
