@@ -131,11 +131,13 @@ pub(super) fn draw_modal(f: &mut Frame, area: Rect, m: &Modal) {
     }
 }
 
-const HELP: [(&str, &str); 15] = [
-    ("↑/↓  k/j", "select drive"),
-    ("1-5  Tab ←/→", "switch tab"),
+const HELP: [(&str, &str); 17] = [
+    ("↑/↓  k/j", "select drive, or scroll details when focused"),
+    ("Tab  Enter", "switch pane / focus details"),
+    ("1-5  ←/→", "switch tab"),
     ("PgUp/PgDn J/K", "scroll details"),
     ("Home/End", "scroll to top / bottom"),
+    ("mouse", "click selects, wheel scrolls"),
     ("r", "re-read selected drive"),
     ("R", "rescan for drives"),
     ("m", "remount a USB drive: unmount, read, mount again"),
@@ -144,7 +146,7 @@ const HELP: [(&str, &str); 15] = [
     ("a", "abort running self-test"),
     ("p", "export PDF report"),
     ("?", "this help"),
-    ("q  Esc", "quit (Esc closes popups)"),
+    ("q", "quit (Esc closes popups)"),
     ("Ctrl-C", "quit immediately"),
     ("", "Self-tests auto-refresh every 30 s"),
 ];

@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Paragraph, Tabs, Wrap};
 
 use crate::model::{Grade, Severity};
 
-use super::app::{App, Tab};
+use super::app::{App, Focus, Rects, Tab};
 use devices::draw_devices;
 use modal::draw_modal;
 use overview::overview_lines;
@@ -30,6 +30,8 @@ const LABEL_W: usize = 13;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
+    // Panes record their regions below; nothing is clickable until they do.
+    app.rects.set(Rects::default());
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         let msg = format!(
             "Terminal too small ({}x{}).\nNeed at least {MIN_WIDTH}x{MIN_HEIGHT}. q quits.",
@@ -54,6 +56,15 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_status(f, status, app);
     if let Some(m) = &app.modal {
         draw_modal(f, area, m);
+    }
+}
+
+/// Border style of a pane; the focused one is highlighted.
+fn pane_border(app: &App, pane: Focus) -> Style {
+    if app.focus == pane {
+        Style::new().fg(Color::Cyan)
+    } else {
+        Style::new()
     }
 }
 
@@ -123,22 +134,39 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
         title.push_str(spinner(app));
         title.push(' ');
     }
-    let block = Block::bordered().title(title);
+    let block = Block::bordered()
+        .title(title)
+        .border_style(pane_border(app, Focus::Details));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let [tabs_area, content] =
         Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
     let wide = inner.width >= 66;
-    let titles = Tab::ALL.iter().enumerate().map(|(i, t)| {
-        let name = match (wide, t) {
-            (false, Tab::Attributes) => "Attrs",
-            (false, Tab::SelfTests) => "Tests",
-            (false, Tab::Statistics) => "Stats",
-            _ => t.title(),
-        };
-        format!("{} {name}", i + 1)
-    });
+    let titles: Vec<String> = Tab::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let name = match (wide, t) {
+                (false, Tab::Attributes) => "Attrs",
+                (false, Tab::SelfTests) => "Tests",
+                (false, Tab::Statistics) => "Stats",
+                _ => t.title(),
+            };
+            format!("{} {name}", i + 1)
+        })
+        .collect();
+    let mut rects = app.rects.get();
+    rects.detail = area;
+    rects.tabs = tabs_area;
+    // Tabs pads each title with a space on both sides and draws a 1-wide divider.
+    let mut x = tabs_area.x;
+    for (span, t) in rects.tab_spans.iter_mut().zip(&titles) {
+        let w = t.chars().count() as u16;
+        *span = (x, x + w + 2);
+        x += w + 3;
+    }
+    app.rects.set(rects);
     f.render_widget(
         Tabs::new(titles)
             .select(app.tab.index())

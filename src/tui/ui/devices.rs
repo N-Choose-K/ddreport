@@ -6,18 +6,21 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::tui::app::App;
+use crate::tui::app::{App, Focus};
 use crate::tui::device::Device;
 
 use super::text::{fmt_capacity, trunc};
-use super::{grade_color, spinner};
+use super::{grade_color, pane_border, spinner};
 
 pub(super) fn draw_devices(f: &mut Frame, area: Rect, app: &App) {
     let mut title = format!(" Drives ({}) ", app.devices.len());
     if app.scanning {
         title = format!(" Drives {} ", spinner(app));
     }
-    let block = Block::bordered().title(title);
+    let block = Block::bordered()
+        .title(title)
+        .border_style(pane_border(app, Focus::Drives));
+    let inner = block.inner(area);
     if app.devices.is_empty() {
         let msg = if app.scanning {
             "Scanning..."
@@ -42,6 +45,10 @@ pub(super) fn draw_devices(f: &mut Frame, area: Rect, app: &App) {
         .highlight_symbol("▌");
     let mut state = ListState::default().with_selected(Some(app.selected));
     f.render_stateful_widget(list, area, &mut state);
+    let mut rects = app.rects.get();
+    rects.list = inner;
+    rects.list_offset = state.offset();
+    app.rects.set(rects);
 }
 
 fn device_item<'a>(d: &Device, app: &App, w: usize) -> ListItem<'a> {
