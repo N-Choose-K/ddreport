@@ -490,14 +490,7 @@ fn identity_rows(id: &Identity, h: &Health) -> Vec<Kv> {
         _ => {}
     }
     if let Some(v) = &id.wwn {
-        rows.push(kv(
-            if id.protocol == Protocol::Nvme {
-                "EUI-64 / WWN"
-            } else {
-                "WWN"
-            },
-            truncate(v, 40),
-        ));
+        rows.push(kv("World Wide Name", truncate(v, 40)));
     }
     if let Some(t) = id.trim_supported {
         rows.push(kv("TRIM", if t { "Supported" } else { "Not supported" }));

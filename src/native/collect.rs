@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 
 use super::ata::{self, DevStatPage, Identify, SctStatus, SelfTestLog, SmartData};
 use super::bridges::Quirks;
+use super::drivedb::DbEntry;
 use super::sat::{AtaCmd, PtSize, Sat, SatError};
 use super::scsi::{Inquiry, ScsiTransport};
 
@@ -29,6 +30,8 @@ pub struct Collected {
     pub smart_status: Option<bool>,
     /// True if `smart_status` was derived from attribute thresholds.
     pub smart_status_from_attrs: bool,
+    /// smartmontools drive database entry, looked up after collection.
+    pub drivedb: Option<DbEntry>,
     pub selftest: Option<SelfTestLog>,
     pub ext_selftest: Option<SelfTestLog>,
     /// (revision, device error count) from the summary SMART error log.
@@ -89,6 +92,7 @@ pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>, quirks: Quirks) -> Result<Col
         thresholds: None,
         smart_status: None,
         smart_status_from_attrs: false,
+        drivedb: None,
         selftest: None,
         ext_selftest: None,
         error_log: None,
@@ -211,7 +215,7 @@ pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>, quirks: Quirks) -> Result<Col
         });
         c.smart_status = Some(!failing);
         c.smart_status_from_attrs = true;
-        c.warn(if quirks.no_return_status {
+        c.info(if quirks.no_return_status {
             "SMART RETURN STATUS skipped (this bridge stops responding to it); overall \
              status derived from attribute thresholds"
         } else {

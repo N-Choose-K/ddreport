@@ -104,6 +104,10 @@ pub struct Health {
     pub smart_enabled: Option<bool>,
     /// Drive's own overall assessment (SMART RETURN STATUS / NVMe critical warning).
     pub overall_passed: Option<bool>,
+    /// `overall_passed` came from attribute thresholds because the bridge
+    /// cannot relay SMART RETURN STATUS.
+    #[serde(default)]
+    pub overall_by_attributes: bool,
     pub power_on_hours: Option<u64>,
     pub power_cycles: Option<u64>,
     pub start_stop_count: Option<u64>,

@@ -72,7 +72,7 @@ fn kill_group(child: &mut std::process::Child) {
 /// smartctl exit-status bits that mean no usable data (cmdline error, open failed).
 const FATAL_EXIT_BITS: i64 = 0b11;
 
-fn smartctl() -> Command {
+pub(crate) fn smartctl() -> Command {
     Command::new(std::env::var("DDREPORT_SMARTCTL").unwrap_or_else(|_| "smartctl".into()))
 }
 
@@ -631,6 +631,7 @@ fn parse_health(j: &Value, id: &Identity, attrs: &[Attribute], stats: &[Stat]) -
         smart_supported: bool_at(j, "/smart_support/available"),
         smart_enabled: bool_at(j, "/smart_support/enabled"),
         overall_passed: bool_at(j, "/smart_status/passed"),
+        overall_by_attributes: bool_at(j, "/smart_status/by_attributes") == Some(true),
         power_on_hours: u64_at(j, "/power_on_time/hours")
             .or_else(|| nv("power_on_hours"))
             .or_else(|| named(attrs, 9, &["Power_On_Hours"])),
