@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use thousands::Separable;
 
 use crate::fmt::bytes_human;
+use crate::health;
 use std::sync::LazyLock;
 
 use anyhow::{Context, anyhow};
@@ -205,6 +206,8 @@ struct Display {
     stats: Listed<Kv>,
     warnings: Listed<String>,
     sha256: String,
+    rubric: Vec<Kv>,
+    sources: Vec<&'static str>,
     disclaimer: &'static str,
 }
 
@@ -408,6 +411,14 @@ fn build_display(r: &DriveReport, paper: Paper, level: usize) -> Display {
             lim.warnings,
         ),
         sha256: r.meta.raw_sha256.clone(),
+        rubric: health::RUBRIC
+            .iter()
+            .map(|(g, t)| Kv {
+                k: (*g).into(),
+                v: (*t).into(),
+            })
+            .collect(),
+        sources: health::SOURCES.to_vec(),
         disclaimer: DISCLAIMER,
     }
 }

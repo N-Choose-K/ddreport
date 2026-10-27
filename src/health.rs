@@ -46,6 +46,36 @@ use crate::model::{
 use thousands::Separable;
 
 pub const TIMEOUTS_CAUTION: u64 = 100;
+
+/// Grading rubric printed on the certificate, worst grade first.
+pub const RUBRIC: &[(&str, &str)] = &[
+    (
+        "FAIL",
+        "SMART overall status FAILED, a pre-failure attribute at or below the vendor threshold, \
+         the newest self-test failed, an NVMe critical warning or spare below its threshold, \
+         100% endurance used, or sectors pending reallocation while others are already bad.",
+    ),
+    (
+        "CAUTION",
+        "any reallocated, pending or uncorrectable sector count, an attribute that failed in \
+         the past, an earlier failed self-test, no self-test within 168 h, 100 or more command \
+         timeouts, NVMe media errors, spare below 50%, 80-99% endurance used, or a lifetime \
+         temperature above 60 C (HDD) / 80 C (SSD).",
+    ),
+    ("PASS", "none of the above."),
+];
+
+/// Published evidence behind the rubric.
+pub const SOURCES: &[&str] = &[
+    "Pinheiro, Weber and Barroso, Failure Trends in a Large Disk Drive Population, USENIX FAST \
+     2007 (scan errors: 39x failure odds within 60 days, 70% survive 8 months; reallocations: \
+     14x, 85% survive 8 months)",
+    "Backblaze, What SMART Stats Tell Us About Hard Drives, 2016 (a nonzero 5, 187, 188, 197 or \
+     198 is a reason to investigate; 4.2% of working drives vs 76.7% of failed drives)",
+    "CrystalDiskInfo health status criteria, crystalmark.info (Caution on sector counts, Bad \
+     below the vendor threshold)",
+    "smartmontools smartctl(8): health status and self-test log semantics",
+];
 pub const SELF_TEST_MAX_AGE_H: u64 = 168;
 pub const ENDURANCE_INFO_PCT: u64 = 50;
 pub const ENDURANCE_CAUTION_PCT: u64 = 80;
