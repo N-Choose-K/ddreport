@@ -1,7 +1,9 @@
-//! Locks a finished PDF against modification: AES-128 (PDF 1.6) with an empty
-//! user password so it opens anywhere, and a random owner password that is
-//! never stored. Reports are regenerated, never edited. AES-128 rather than
-//! AES-256 because poppler cannot read lopdf 0.46's AES-256 output.
+//! Marks a finished PDF read-only: AES-128 (PDF 1.6) with an empty user
+//! password so it opens anywhere, editing permissions withheld, and a random
+//! owner password that is never stored. Compliant readers (Preview, Acrobat,
+//! browsers) refuse edits; a PDF library can still strip the restrictions, so
+//! this guards against casual changes only. Reports are regenerated, never
+//! edited. AES-128 because poppler cannot read lopdf 0.46's AES-256 output.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,7 +20,8 @@ pub const ALLOWED: Permissions = Permissions::PRINTABLE
     .union(Permissions::COPYABLE)
     .union(Permissions::COPYABLE_FOR_ACCESSIBILITY);
 
-/// Encrypts `pdf` so it opens without a password but cannot be modified.
+/// Encrypts `pdf` so it opens without a password and compliant readers
+/// refuse to edit it.
 pub fn lock(pdf: &[u8]) -> Result<Vec<u8>> {
     let mut doc = Document::load_mem(pdf).context("parsing the rendered PDF")?;
     let mut owner = [0u8; 32];
