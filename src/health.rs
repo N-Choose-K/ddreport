@@ -1,7 +1,7 @@
 //! Grades a report into a PASS / CAUTION / FAIL verdict.
 //!
 //! Fail means the drive itself says so or data is unreadable right now: SMART
-//! overall status FAILED, a pre-failure attribute at or below the vendor's
+//! overall status FAILED, an attribute at or below the vendor's
 //! threshold, a failed newest self-test, an NVMe critical warning, or sectors
 //! pending reallocation on a drive that has already remapped sectors or
 //! returned uncorrectable reads. Caution means a known risk signal with most
@@ -52,7 +52,7 @@ pub const TIMEOUTS_CAUTION: u64 = 100;
 pub const RUBRIC: &[(&str, &str)] = &[
     (
         "FAIL",
-        "SMART overall status FAILED, a pre-failure attribute at or below the vendor threshold, \
+        "SMART overall status FAILED, an attribute at or below the vendor threshold, \
          the newest self-test failed, an NVMe critical warning or spare below its threshold, \
          100% endurance used, or sectors pending reallocation on a drive that has already \
          remapped sectors or returned uncorrectable reads.",
@@ -61,8 +61,8 @@ pub const RUBRIC: &[(&str, &str)] = &[
         "CAUTION",
         "any reallocated, pending or uncorrectable sector count, an attribute that failed in \
          the past, an earlier failed self-test, no self-test within 168 h, 100 or more command \
-         timeouts, NVMe media errors, spare below 50%, 80-99% endurance used, or a lifetime \
-         temperature above 60 C (HDD) / 80 C (SSD).",
+         timeouts, NVMe media errors, spare below 50%, 80-99% endurance used, a lifetime \
+         temperature above 60 C (HDD) / 80 C (SSD), or incomplete SMART data.",
     ),
     ("PASS", "none of the above."),
 ];
