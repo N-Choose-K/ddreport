@@ -610,7 +610,11 @@ fn tiles(id: &Identity, h: &Health) -> Vec<Tile> {
         t.push(zero_good_tile(
             "Pending sectors",
             h.pending_sectors,
-            Level::Bad,
+            if health::pending_escalated(h) {
+                Level::Bad
+            } else {
+                Level::Warn
+            },
         ));
         t.push(uncorrectable_tile(h));
         t.push(zero_good_tile(
@@ -686,7 +690,7 @@ fn uncorrectable_tile(h: &Health) -> Tile {
         (Some(_), None) => "offline scan".into(),
         _ => "reported to host".into(),
     };
-    let level = if worst == 0 { Level::Ok } else { Level::Bad };
+    let level = if worst == 0 { Level::Ok } else { Level::Warn };
     tile(LABEL, count(worst), sub, level)
 }
 
@@ -1098,7 +1102,7 @@ mod tests {
             ..Default::default()
         };
         let t = uncorrectable_tile(&h);
-        assert_eq!((t.value.as_str(), t.level), ("12", Level::Bad));
+        assert_eq!((t.value.as_str(), t.level), ("12", Level::Warn));
         assert_eq!(t.sub, "offline 0 / reported 12");
 
         let h = Health {
@@ -1114,7 +1118,7 @@ mod tests {
             ..Default::default()
         };
         let t = uncorrectable_tile(&h);
-        assert_eq!((t.value.as_str(), t.level), ("3", Level::Bad));
+        assert_eq!((t.value.as_str(), t.level), ("3", Level::Warn));
     }
 
     #[test]

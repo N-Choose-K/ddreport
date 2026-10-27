@@ -4,6 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::fmt::bytes_human;
+use crate::health;
 use crate::model::{DriveReport, MediaKind, Protocol};
 
 use super::text::{fmt_capacity, fmt_count, fmt_time, trunc, wrap, yes_no};
@@ -178,6 +179,11 @@ fn health_rows(r: &DriveReport) -> Vec<Kv> {
             Some(t) => format!("{s}% (threshold {t}%)"),
             None => format!("{s}%"),
         });
+    let pending_color = if health::pending_escalated(h) {
+        Color::Red
+    } else {
+        Color::Yellow
+    };
     let wear = h.endurance_used_pct.map(|p| {
         let c = match p {
             0..=49 => Color::Green,
@@ -196,8 +202,8 @@ fn health_rows(r: &DriveReport) -> Vec<Kv> {
         kv("Power cycles", h.power_cycles.map(fmt_count)),
         kv("Temperature", temp),
         bad_count("Reallocated", h.reallocated_sectors, Color::Yellow),
-        bad_count("Pending", h.pending_sectors, Color::Red),
-        bad_count("Offline unc", h.offline_uncorrectable, Color::Red),
+        bad_count("Pending", h.pending_sectors, pending_color),
+        bad_count("Offline unc", h.offline_uncorrectable, Color::Yellow),
         bad_count("Reported unc", h.reported_uncorrectable, Color::Yellow),
         bad_count("CRC errors", h.udma_crc_errors, Color::Yellow),
         bad_count("Cmd timeouts", h.command_timeouts, Color::Yellow),

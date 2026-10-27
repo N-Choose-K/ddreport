@@ -2,24 +2,25 @@
 //!
 //! Fail means the drive itself says so or data is unreadable right now: SMART
 //! overall status FAILED, a pre-failure attribute at or below the vendor's
-//! threshold, a failed newest self-test, an NVMe critical warning, or bad
-//! sectors still appearing after others were remapped. Caution means a known
-//! risk signal with most drives still surviving: Google's 2007 study found
-//! drives with a scan error 39x more likely to fail within 60 days, yet 70%
-//! survived 8 months, and 85% survived 8 months after a first reallocation.
-//! Backblaze treats a non-zero raw value on 5, 187, 188, 197 or 198 as "a
-//! reason to investigate" and schedules replacement when reallocations and
-//! pending sectors both climb. CrystalDiskInfo grades the same counters
-//! Caution and reserves Bad for the vendor threshold. Grading reads only
-//! `Health`, `attributes[].when_failed` and the self-test log; vendor raw
-//! values are never graded (Seagate packs 1/7/195 raws, so they are
-//! meaningless as counts).
+//! threshold, a failed newest self-test, an NVMe critical warning, or sectors
+//! pending reallocation on a drive that has already remapped sectors or
+//! returned uncorrectable reads. Caution means a known risk signal with most
+//! drives still surviving: Google's 2007 study found drives with a scan error
+//! 39x more likely to fail within 60 days, yet 70% survived 8 months, and 85%
+//! survived 8 months after a first reallocation. Backblaze treats a non-zero
+//! raw value on 5, 187, 188, 197 or 198 as "a reason to investigate", counts
+//! 197 and 198 as one correlated indicator, and schedules replacement when
+//! reallocations and pending sectors both climb. CrystalDiskInfo grades 5, 197
+//! and 198 Caution and reserves Bad for the vendor threshold. Grading reads
+//! `Health` (counts decoded from attributes whose raw is a plain count),
+//! `attributes[].when_failed` and the self-test log; packed vendor raws such
+//! as Seagate 1/7/195 are never graded.
 //!
 //! | Check                       | Good            | Info               | Caution                      | Critical                    |
 //! |-----------------------------|-----------------|--------------------|------------------------------|-----------------------------|
 //! | Overall SMART status        | passed          | not readable       |                              | failed                      |
 //! | Attribute thresholds        | none failed     |                    | failed in the past           | failing now                 |
-//! | Pending sectors (197)       | 0               |                    | > 0                          | > 0 with 5, 187 or 198 > 0  |
+//! | Pending sectors (197)       | 0               |                    | > 0                          | > 0 with 5 or 187 > 0       |
 //! | Offline uncorrectable (198) | 0               |                    | > 0                          |                             |
 //! | Reallocated sectors (5)     | 0               |                    | > 0                          |                             |
 //! | Reported uncorrectable (187)| 0               |                    | > 0                          |                             |
@@ -53,7 +54,8 @@ pub const RUBRIC: &[(&str, &str)] = &[
         "FAIL",
         "SMART overall status FAILED, a pre-failure attribute at or below the vendor threshold, \
          the newest self-test failed, an NVMe critical warning or spare below its threshold, \
-         100% endurance used, or sectors pending reallocation while others are already bad.",
+         100% endurance used, or sectors pending reallocation on a drive that has already \
+         remapped sectors or returned uncorrectable reads.",
     ),
     (
         "CAUTION",
@@ -230,18 +232,22 @@ fn attributes(r: &DriveReport, f: &mut Findings) {
     }
 }
 
+/// Pending sectors on a drive that has already remapped sectors (5) or
+/// returned uncorrectable reads (187): Backblaze's replacement case.
+pub fn pending_escalated(h: &Health) -> bool {
+    let nonzero = |v: Option<u64>| v.is_some_and(|n| n > 0);
+    nonzero(h.pending_sectors)
+        && (nonzero(h.reallocated_sectors) || nonzero(h.reported_uncorrectable))
+}
+
 fn sectors(h: &Health, f: &mut Findings) {
-    let count = |v: Option<u64>| v.unwrap_or(0);
-    let remapped = count(h.reallocated_sectors)
-        + count(h.offline_uncorrectable)
-        + count(h.reported_uncorrectable);
     if let Some(n @ 1..) = h.pending_sectors {
-        if remapped > 0 {
+        if pending_escalated(h) {
             f.push(
                 Severity::Critical,
                 format!(
-                    "{} pending reallocation while others are already bad - the drive keeps \
-                     finding bad sectors; copy the data off and replace it",
+                    "{} pending reallocation on a drive that has already remapped sectors or \
+                     returned uncorrectable reads - copy the data off and replace it",
                     plural(n, "sector")
                 ),
             );
@@ -797,13 +803,13 @@ mod tests {
     }
 
     #[test]
-    fn pending_with_remapped_sectors_fails() {
-        for field in ["reallocated", "offline", "reported"] {
+    fn pending_with_reallocated_or_reported_fails() {
+        for field in ["reallocated", "reported"] {
             let mut r = healthy_hdd();
             r.health.pending_sectors = Some(5);
+            r.health.offline_uncorrectable = None;
             match field {
                 "reallocated" => r.health.reallocated_sectors = Some(10),
-                "offline" => r.health.offline_uncorrectable = Some(1),
                 _ => r.health.reported_uncorrectable = Some(1),
             }
             let v = evaluate(&r);
@@ -811,13 +817,54 @@ mod tests {
             assert!(has(
                 &v,
                 Severity::Critical,
-                "5 sectors pending reallocation while others are already bad"
+                "5 sectors pending reallocation on a drive that has already remapped"
             ));
             assert_eq!(
                 v.summary,
                 "1 critical problem found; this drive is not recommended for storing data."
             );
         }
+    }
+
+    #[test]
+    fn pending_with_offline_uncorrectable_only_cautions() {
+        let mut r = healthy_hdd();
+        r.health.pending_sectors = Some(5);
+        r.health.offline_uncorrectable = Some(20);
+        r.health.reallocated_sectors = None;
+        r.health.reported_uncorrectable = None;
+        let v = evaluate(&r);
+        assert_eq!(v.grade, Grade::Caution);
+        assert!(has(&v, Severity::Caution, "5 sectors pending reallocation"));
+        assert!(has(
+            &v,
+            Severity::Caution,
+            "20 sectors the drive's own surface scan"
+        ));
+    }
+
+    #[test]
+    fn huge_counts_do_not_overflow() {
+        let mut r = healthy_hdd();
+        r.health.reallocated_sectors = Some(u64::MAX);
+        r.health.offline_uncorrectable = Some(u64::MAX);
+        r.health.reported_uncorrectable = Some(u64::MAX);
+        assert_eq!(evaluate(&r).grade, Grade::Caution);
+        r.health.pending_sectors = Some(u64::MAX);
+        assert_eq!(evaluate(&r).grade, Grade::Fail);
+    }
+
+    #[test]
+    fn ssd_without_pending_attribute_stays_caution() {
+        let mut r = healthy_hdd();
+        r.identity.media = MediaKind::Ssd;
+        r.health.pending_sectors = None;
+        r.health.reallocated_sectors = Some(2);
+        r.health.offline_uncorrectable = Some(2);
+        r.health.reported_uncorrectable = Some(0);
+        let v = evaluate(&r);
+        assert_eq!(v.grade, Grade::Caution);
+        assert!(!pending_escalated(&r.health));
     }
 
     #[test]
