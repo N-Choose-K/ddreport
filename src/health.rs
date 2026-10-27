@@ -1,30 +1,39 @@
 //! Grades a report into a PASS / CAUTION / FAIL verdict.
 //!
-//! Backblaze's drive stats single out SMART 5, 187, 188, 197 and 198: a non-zero
-//! raw value on any of them multiplies failure risk, and 197/198 (sectors the
-//! drive cannot read) are the strongest signals. Grading reads only `Health`,
-//! `attributes[].when_failed` and the self-test log. Vendor raw values are never
-//! graded (Seagate packs 1/7/195 raws, so they are meaningless as counts).
+//! Fail means the drive itself says so or data is unreadable right now: SMART
+//! overall status FAILED, a pre-failure attribute at or below the vendor's
+//! threshold, a failed newest self-test, an NVMe critical warning, or bad
+//! sectors still appearing after others were remapped. Caution means a known
+//! risk signal with most drives still surviving: Google's 2007 study found
+//! drives with a scan error 39x more likely to fail within 60 days, yet 70%
+//! survived 8 months, and 85% survived 8 months after a first reallocation.
+//! Backblaze treats a non-zero raw value on 5, 187, 188, 197 or 198 as "a
+//! reason to investigate" and schedules replacement when reallocations and
+//! pending sectors both climb. CrystalDiskInfo grades the same counters
+//! Caution and reserves Bad for the vendor threshold. Grading reads only
+//! `Health`, `attributes[].when_failed` and the self-test log; vendor raw
+//! values are never graded (Seagate packs 1/7/195 raws, so they are
+//! meaningless as counts).
 //!
-//! | Check                       | Good            | Info               | Caution                      | Critical               |
-//! |-----------------------------|-----------------|--------------------|------------------------------|------------------------|
-//! | Overall SMART status        | passed          | not readable       |                              | failed                 |
-//! | Attribute thresholds        | none failed     |                    | failed in the past           | failing now            |
-//! | Pending sectors (197)       | 0               |                    |                              | > 0                    |
-//! | Offline uncorrectable (198) | 0               |                    |                              | > 0                    |
-//! | Reallocated sectors (5)     | 0               |                    | 1-99                         | >= 100                 |
-//! | Reported uncorrectable (187)| 0               |                    | > 0                          |                        |
-//! | Command timeouts (188)      |                 | 1-99               | >= 100                       |                        |
-//! | UDMA CRC errors (199)       |                 | > 0 (cable/USB)    |                              |                        |
-//! | Newest conclusive self-test | passed <= 168 h | no recent extended | none, > 168 h, older failure | failed                 |
-//! | NVMe critical warning       | 0               |                    |                              | != 0                   |
-//! | Available spare             | >= 50%          |                    | < 50%                        | < threshold (def. 10%) |
-//! | SSD endurance used          | < 50%           | 50-79%             | 80-99%                       | >= 100%                |
-//! | NVMe media errors           | 0               |                    | > 0                          |                        |
-//! | Lifetime max temperature    |                 |                    | HDD > 60 C, SSD > 80 C       |                        |
-//! | Power-on time               |                 | always             |                              |                        |
-//! | Unsafe shutdowns            |                 | > 0                |                              |                        |
-//! | ATA error log entries       |                 | > 0                |                              |                        |
+//! | Check                       | Good            | Info               | Caution                      | Critical                    |
+//! |-----------------------------|-----------------|--------------------|------------------------------|-----------------------------|
+//! | Overall SMART status        | passed          | not readable       |                              | failed                      |
+//! | Attribute thresholds        | none failed     |                    | failed in the past           | failing now                 |
+//! | Pending sectors (197)       | 0               |                    | > 0                          | > 0 with 5, 187 or 198 > 0  |
+//! | Offline uncorrectable (198) | 0               |                    | > 0                          |                             |
+//! | Reallocated sectors (5)     | 0               |                    | > 0                          |                             |
+//! | Reported uncorrectable (187)| 0               |                    | > 0                          |                             |
+//! | Command timeouts (188)      |                 | 1-99               | >= 100                       |                             |
+//! | UDMA CRC errors (199)       |                 | > 0 (cable/USB)    |                              |                             |
+//! | Newest conclusive self-test | passed <= 168 h | no recent extended | none, > 168 h, older failure | failed                      |
+//! | NVMe critical warning       | 0               |                    |                              | != 0                        |
+//! | Available spare             | >= 50%          |                    | < 50%                        | < threshold (def. 10%)      |
+//! | SSD endurance used          | < 50%           | 50-79%             | 80-99%                       | >= 100%                     |
+//! | NVMe media errors           | 0               |                    | > 0                          |                             |
+//! | Lifetime max temperature    |                 |                    | HDD > 60 C, SSD > 80 C       |                             |
+//! | Power-on time               |                 | always             |                              |                             |
+//! | Unsafe shutdowns            |                 | > 0                |                              |                             |
+//! | ATA error log entries       |                 | > 0                |                              |                             |
 //!
 //! Grade: any Critical -> Fail, else any Caution -> Caution, else Pass. Unknown
 //! when SMART is unsupported, disabled or returned nothing. Self-tests that are
@@ -36,7 +45,6 @@ use crate::model::{
 };
 use thousands::Separable;
 
-pub const REALLOCATED_FAIL: u64 = 100;
 pub const TIMEOUTS_CAUTION: u64 = 100;
 pub const SELF_TEST_MAX_AGE_H: u64 = 168;
 pub const ENDURANCE_INFO_PCT: u64 = 50;
@@ -193,40 +201,48 @@ fn attributes(r: &DriveReport, f: &mut Findings) {
 }
 
 fn sectors(h: &Health, f: &mut Findings) {
+    let count = |v: Option<u64>| v.unwrap_or(0);
+    let remapped = count(h.reallocated_sectors)
+        + count(h.offline_uncorrectable)
+        + count(h.reported_uncorrectable);
     if let Some(n @ 1..) = h.pending_sectors {
-        f.push(
-            Severity::Critical,
-            format!(
-                "{} pending reallocation - drive is developing bad sectors",
-                plural(n, "sector")
-            ),
-        );
+        if remapped > 0 {
+            f.push(
+                Severity::Critical,
+                format!(
+                    "{} pending reallocation while others are already bad - the drive keeps \
+                     finding bad sectors; copy the data off and replace it",
+                    plural(n, "sector")
+                ),
+            );
+        } else {
+            f.push(
+                Severity::Caution,
+                format!(
+                    "{} pending reallocation - data there may be unreadable; back up now and \
+                     re-check for growth",
+                    plural(n, "sector")
+                ),
+            );
+        }
     }
     if let Some(n @ 1..) = h.offline_uncorrectable {
         f.push(
-            Severity::Critical,
+            Severity::Caution,
             format!(
-                "{} the drive's own surface scan could not read",
+                "{} the drive's own surface scan could not read - watch for growth",
                 plural(n, "sector")
             ),
         );
     }
-    match h.reallocated_sectors {
-        Some(n) if n >= REALLOCATED_FAIL => f.push(
-            Severity::Critical,
-            format!(
-                "{} reallocated to spare areas - extensive surface damage",
-                plural(n, "sector")
-            ),
-        ),
-        Some(n @ 1..) => f.push(
+    if let Some(n @ 1..) = h.reallocated_sectors {
+        f.push(
             Severity::Caution,
             format!(
-                "{} reallocated to spare areas - the drive has had bad sectors",
+                "{} reallocated to spare areas - the drive has had bad sectors; watch for growth",
                 plural(n, "sector")
             ),
-        ),
-        _ => {}
+        );
     }
     if let Some(n @ 1..) = h.reported_uncorrectable {
         f.push(
@@ -729,15 +745,15 @@ mod tests {
     }
 
     #[test]
-    fn pending_sectors_fail() {
+    fn pending_sectors_alone_caution() {
         let mut r = healthy_hdd();
         r.health.pending_sectors = Some(16);
         let v = evaluate(&r);
-        assert_eq!(v.grade, Grade::Fail);
+        assert_eq!(v.grade, Grade::Caution);
         assert!(has(
             &v,
-            Severity::Critical,
-            "16 sectors pending reallocation - drive is developing bad sectors"
+            Severity::Caution,
+            "16 sectors pending reallocation - data there may be unreadable"
         ));
         assert!(has(
             &v,
@@ -746,22 +762,58 @@ mod tests {
         ));
         assert_eq!(
             v.summary,
-            "1 critical problem found; this drive is not recommended for storing data."
+            "No critical problems, but 1 item needs attention before relying on this drive."
         );
     }
 
     #[test]
-    fn offline_uncorrectable_fails() {
+    fn pending_with_remapped_sectors_fails() {
+        for field in ["reallocated", "offline", "reported"] {
+            let mut r = healthy_hdd();
+            r.health.pending_sectors = Some(5);
+            match field {
+                "reallocated" => r.health.reallocated_sectors = Some(10),
+                "offline" => r.health.offline_uncorrectable = Some(1),
+                _ => r.health.reported_uncorrectable = Some(1),
+            }
+            let v = evaluate(&r);
+            assert_eq!(v.grade, Grade::Fail, "{field}");
+            assert!(has(
+                &v,
+                Severity::Critical,
+                "5 sectors pending reallocation while others are already bad"
+            ));
+            assert_eq!(
+                v.summary,
+                "1 critical problem found; this drive is not recommended for storing data."
+            );
+        }
+    }
+
+    #[test]
+    fn offline_uncorrectable_cautions() {
         let mut r = healthy_hdd();
         r.health.offline_uncorrectable = Some(1);
         let v = evaluate(&r);
-        assert_eq!(v.grade, Grade::Fail);
+        assert_eq!(v.grade, Grade::Caution);
         assert!(has(
             &v,
-            Severity::Critical,
+            Severity::Caution,
             "1 sector the drive's own surface scan could not read"
         ));
         assert!(has(&v, Severity::Good, "No reallocated or pending sectors"));
+    }
+
+    #[test]
+    fn remapped_sectors_without_pending_caution() {
+        let mut r = healthy_hdd();
+        r.health.reallocated_sectors = Some(2);
+        r.health.offline_uncorrectable = Some(2);
+        r.health.reported_uncorrectable = Some(3);
+        r.health.pending_sectors = Some(0);
+        let v = evaluate(&r);
+        assert_eq!(v.grade, Grade::Caution);
+        assert!(has(&v, Severity::Good, "No pending sectors"));
     }
 
     #[test]
@@ -781,7 +833,7 @@ mod tests {
     }
 
     #[test]
-    fn reallocated_thresholds() {
+    fn reallocated_any_count_cautions() {
         let mut r = healthy_hdd();
         r.health.reallocated_sectors = Some(8);
         let v = evaluate(&r);
@@ -793,8 +845,8 @@ mod tests {
             "No pending or uncorrectable sectors"
         ));
 
-        r.health.reallocated_sectors = Some(REALLOCATED_FAIL);
-        assert_eq!(evaluate(&r).grade, Grade::Fail);
+        r.health.reallocated_sectors = Some(5000);
+        assert_eq!(evaluate(&r).grade, Grade::Caution);
     }
 
     #[test]
