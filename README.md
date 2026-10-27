@@ -66,6 +66,21 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
   each command and each progress read (once a minute while a test runs)
   unmounts the drive briefly and macOS mounts it again.
 
+## Install
+
+```sh
+cargo install --git ssh://git@github.com/nortagawa/ddreport
+```
+
+Re-run the same command to update. `smartctl` (smartmontools) must be on
+PATH for the smartctl backend. On macOS with a nix or Homebrew `cc` first on
+PATH, point cargo at Apple's linker in `~/.cargo/config.toml`:
+
+```toml
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
+```
+
 ## Development
 
 ```sh
@@ -75,4 +90,5 @@ cargo run -- report --from-json fixtures/sata_hdd_wd_red_usb.json -o /tmp/wd.pdf
 
 `fixtures/` holds smartctl JSON samples; see `fixtures/README.md`.
 
-Font files under `assets/fonts/` are stored with Git LFS; install `git-lfs` before cloning.
+Sample images under `docs/` are stored with Git LFS; the fonts under
+`assets/fonts/` are plain blobs so `cargo install --git` can embed them.
