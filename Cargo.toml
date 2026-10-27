@@ -13,8 +13,10 @@ clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
 gethostname = "1"
 humansize = "2"
+lopdf = "0.46"
 nusb = "0.2"
 plist = "1"
+rand = "0.8"
 ratatui = "0.30"
 rusb = { version = "0.9.4", features = ["vendored"] }
 serde = { version = "1", features = ["derive"] }

@@ -67,13 +67,19 @@ static ENGINE: LazyLock<TypstEngine<TypstTemplateMainFile>> = LazyLock::new(|| {
         .build()
 });
 
-/// Renders a one-page US Letter certificate.
+/// Renders a one-page US Letter certificate, locked against modification.
 pub fn render(r: &DriveReport) -> anyhow::Result<Vec<u8>> {
     render_with(r, &PdfOptions::default())
 }
 
-/// Renders a one-page certificate with the given options.
+/// Renders a one-page certificate with the given options, locked against
+/// modification (see `lock`).
 pub fn render_with(r: &DriveReport, opts: &PdfOptions) -> anyhow::Result<Vec<u8>> {
+    crate::lock::lock(&render_unlocked(r, opts)?)
+}
+
+/// Renders the certificate without the modification lock; deterministic.
+pub fn render_unlocked(r: &DriveReport, opts: &PdfOptions) -> anyhow::Result<Vec<u8>> {
     let data = serde_json::to_string(r).context("serializing report")?;
     for level in 0..LAYOUTS.len() {
         let display = build_display(r, opts.paper, level);
@@ -1091,7 +1097,11 @@ mod tests {
     #[test]
     fn deterministic_output() {
         let r = maximal();
-        assert_eq!(render(&r).unwrap(), render(&r).unwrap());
+        let opts = PdfOptions::default();
+        assert_eq!(
+            render_unlocked(&r, &opts).unwrap(),
+            render_unlocked(&r, &opts).unwrap()
+        );
     }
 
     #[test]
