@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod fmt;
 pub mod health;
+pub mod lock;
 pub mod model;
 pub mod native;
 pub mod pdf;

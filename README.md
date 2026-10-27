@@ -15,6 +15,9 @@ printable certificate.
   uncorrectable sectors, CRC errors, lifetime reads/writes, SSD wear
 - Full SMART attribute table, self-test log, device statistics
 - Verdict with plain-English findings and the SHA-256 of the raw data
+- PDF marked read-only (AES-128, opens without a password, editing permissions
+  withheld; the owner password is random and discarded, so regenerate the
+  report to change it; readers honour this, a PDF library can strip it)
 
 ## Requirements
 
