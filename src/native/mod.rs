@@ -65,6 +65,9 @@ impl Transport {
 pub struct UsbStorageDevice {
     pub bus: u8,
     pub address: u8,
+    /// macOS IORegistry locationID (bus and port path); survives re-enumeration,
+    /// which `address` does not. 0 elsewhere.
+    pub location: u32,
     pub vendor_id: u16,
     pub product_id: u16,
     pub manufacturer: Option<String>,
@@ -263,7 +266,8 @@ pub fn read_smart(sel: &UsbSelector, force: bool, unmount: bool) -> Result<Nativ
     let dev = select(&devs, sel)?;
     // The closure lets the pipe lifetime be higher-ranked; a fn path can't.
     #[allow(clippy::redundant_closure)]
-    let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat))?;
+    let quirks = bridges::quirks(dev.vendor_id, dev.product_id);
+    let (mut c, notes) = usb::with_sat(dev, force, unmount, |sat| collect::collect(sat, quirks))?;
     c.messages.extend(notes);
     if c.pt_size == PtSize::Twelve {
         c.messages.push(Message {
@@ -292,6 +296,7 @@ mod tests {
         UsbStorageDevice {
             bus,
             address,
+            location: 0,
             vendor_id: 0x1f75,
             product_id: 0x0611,
             manufacturer: None,

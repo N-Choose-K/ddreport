@@ -38,6 +38,7 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
         out.push(UsbStorageDevice {
             bus: bus_number(&info),
             address: info.device_address(),
+            location: location_id(&info),
             vendor_id: info.vendor_id(),
             product_id: info.product_id(),
             manufacturer: info.manufacturer_string().map(str::to_owned),
@@ -53,6 +54,19 @@ pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
         });
     }
     Ok(out)
+}
+
+/// IORegistry locationID on macOS; 0 elsewhere.
+fn location_id(info: &nusb::DeviceInfo) -> u32 {
+    #[cfg(target_os = "macos")]
+    {
+        info.location_id()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = info;
+        0
+    }
 }
 
 /// Bus number as libusb reports it.
@@ -164,6 +178,24 @@ impl Claim {
     }
 }
 
+impl Claim {
+    /// Releases the interface and hands the device back to the OS driver.
+    /// The reattach stays armed for Drop until it has succeeded.
+    fn release(mut self) -> Result<()> {
+        let released = self
+            .handle
+            .release_interface(self.iface)
+            .context("releasing the interface");
+        if self.reattach {
+            self.handle
+                .attach_kernel_driver(self.iface)
+                .context("reattaching the OS driver")?;
+            self.reattach = false;
+        }
+        released
+    }
+}
+
 impl Drop for Claim {
     fn drop(&mut self) {
         let _ = self.handle.release_interface(self.iface);
@@ -172,6 +204,9 @@ impl Drop for Claim {
         }
     }
 }
+
+/// How long to wait for the OS to show the disk again after the handback.
+const REAPPEAR_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// BOT alternate setting and its bulk endpoints.
 fn find_bot_alt(cfg: &rusb::ConfigDescriptor, iface: u8) -> Option<(u8, u8, u8)> {
@@ -301,5 +336,21 @@ pub fn with_sat<R>(
     };
     let mut sat = Sat::new(Bot::new(pipe, 0));
     let r = f(&mut sat)?;
+    drop(sat);
+    let warn = |text: String| Message {
+        text,
+        severity: "warning",
+    };
+    if let Err(e) = claim.release() {
+        notes.push(warn(format!(
+            "handing the device back to the OS failed: {e:#}; unplug and replug the drive if it \
+             does not reappear"
+        )));
+    } else if !busy::disk_reappeared(dev, REAPPEAR_TIMEOUT) {
+        notes.push(warn(format!(
+            "the drive has not reappeared in the OS {} s after the read; unplug and replug it",
+            REAPPEAR_TIMEOUT.as_secs()
+        )));
+    }
     Ok((r, notes))
 }

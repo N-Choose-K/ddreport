@@ -3,6 +3,7 @@
 use anyhow::{Context, Result, bail};
 
 use super::ata::{self, DevStatPage, Identify, SctStatus, SelfTestLog, SmartData};
+use super::bridges::Quirks;
 use super::sat::{AtaCmd, PtSize, Sat, SatError};
 use super::scsi::{Inquiry, ScsiTransport};
 
@@ -70,7 +71,7 @@ impl Collected {
 }
 
 /// Reads identity, SMART data and logs. Only IDENTIFY failing is fatal.
-pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>) -> Result<Collected> {
+pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>, quirks: Quirks) -> Result<Collected> {
     let inquiry = sat.inquiry();
     let raw = sat.read(AtaCmd::Identify).context(
         "ATA IDENTIFY DEVICE through SAT failed; the bridge may not support ATA pass-through",
@@ -125,44 +126,12 @@ pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>) -> Result<Collected> {
         c.thresholds = c
             .optional("SMART READ THRESHOLDS", r)
             .map(|b| ata::parse_thresholds(&b));
-        c.smart_status = match sat.non_data(AtaCmd::SmartReturnStatus) {
-            Ok(Some(a)) => match (a.lba_mid(), a.lba_high()) {
-                (0x4f, 0xc2) => Some(true),
-                (0xf4, 0x2c) => Some(false),
-                (m, h) => {
-                    c.warn(format!(
-                        "SMART RETURN STATUS: unexpected registers 0x{m:02x}/0x{h:02x}"
-                    ));
-                    None
-                }
-            },
-            Ok(None) => {
-                c.warn("SMART RETURN STATUS: bridge returned no ATA registers");
-                None
-            }
-            Err(e) => {
-                c.warn(format!("SMART RETURN STATUS failed: {e:#}"));
-                None
-            }
-        };
         let r = sat.read(AtaCmd::SmartReadLog(0x00, 1));
         smart_dir = c
             .optional("SMART log directory", r)
             .map(|b| ata::parse_log_directory(&b));
     } else {
         c.warn("SMART is not supported by this drive");
-    }
-
-    if c.smart_status.is_none()
-        && let (Some(sd), Some(th)) = (&c.smart, &c.thresholds)
-    {
-        let failing = sd.attrs.iter().any(|a| {
-            let t = th.iter().find(|t| t.0 == a.id).map_or(0, |t| t.1);
-            a.flags & 1 != 0 && ata::when_failed(a.value, a.worst, t) == "now"
-        });
-        c.smart_status = Some(!failing);
-        c.smart_status_from_attrs = true;
-        c.warn("SMART overall status derived from attribute thresholds");
     }
 
     let smart_ok = id.smart_supported && c.smart.is_some();
@@ -207,6 +176,47 @@ pub fn collect<T: ScsiTransport>(sat: &mut Sat<T>) -> Result<Collected> {
         c.sct = c
             .optional("SCT status", r)
             .and_then(|b| ata::parse_sct_status(&b));
+    }
+
+    // Last: the one non-data command. Some bridges wedge on it, and everything
+    // above is worth more than the status bit.
+    if id.smart_supported && !quirks.no_return_status {
+        c.smart_status = match sat.non_data(AtaCmd::SmartReturnStatus) {
+            Ok(Some(a)) => match (a.lba_mid(), a.lba_high()) {
+                (0x4f, 0xc2) => Some(true),
+                (0xf4, 0x2c) => Some(false),
+                (m, h) => {
+                    c.warn(format!(
+                        "SMART RETURN STATUS: unexpected registers 0x{m:02x}/0x{h:02x}"
+                    ));
+                    None
+                }
+            },
+            Ok(None) => {
+                c.warn("SMART RETURN STATUS: bridge returned no ATA registers");
+                None
+            }
+            Err(e) => {
+                c.warn(format!("SMART RETURN STATUS failed: {e:#}"));
+                None
+            }
+        };
+    }
+    if c.smart_status.is_none()
+        && let (Some(sd), Some(th)) = (&c.smart, &c.thresholds)
+    {
+        let failing = sd.attrs.iter().any(|a| {
+            let t = th.iter().find(|t| t.0 == a.id).map_or(0, |t| t.1);
+            a.flags & 1 != 0 && ata::when_failed(a.value, a.worst, t) == "now"
+        });
+        c.smart_status = Some(!failing);
+        c.smart_status_from_attrs = true;
+        c.warn(if quirks.no_return_status {
+            "SMART RETURN STATUS skipped (this bridge stops responding to it); overall \
+             status derived from attribute thresholds"
+        } else {
+            "SMART overall status derived from attribute thresholds"
+        });
     }
 
     Ok(c)
@@ -288,7 +298,7 @@ mod tests {
     #[test]
     fn full_collection() {
         let mut sat = Sat::new(MockDrive::default());
-        let c = collect(&mut sat).unwrap();
+        let c = collect(&mut sat, Quirks::default()).unwrap();
         assert_eq!(c.inquiry.as_ref().unwrap().vendor, "Innostor");
         assert_eq!(c.identify.model, "WDC WD80EFAX-68KNBN0");
         assert_eq!(c.smart_status, Some(true));
@@ -310,7 +320,7 @@ mod tests {
             reject_pt16: true,
             ..Default::default()
         });
-        let c = collect(&mut sat).unwrap();
+        let c = collect(&mut sat, Quirks::default()).unwrap();
         assert_eq!(sat.size, PtSize::Twelve);
         assert_eq!(c.smart_status, Some(true));
         assert_eq!(c.selftest.as_ref().unwrap().entries.len(), 2);
@@ -323,7 +333,7 @@ mod tests {
             status_aborted: true,
             ..Default::default()
         };
-        let c = collect(&mut Sat::new(drive)).unwrap();
+        let c = collect(&mut Sat::new(drive), Quirks::default()).unwrap();
         assert_eq!(c.smart_status, Some(true));
         assert!(c.smart_status_from_attrs);
         assert!(
@@ -331,6 +341,42 @@ mod tests {
                 .iter()
                 .any(|m| m.severity == "warning" && m.text.contains("aborted"))
         );
+    }
+
+    fn is_return_status(cdb: &[u8]) -> bool {
+        cdb[0] == 0x85 && cdb[4] == 0xda && cdb[14] == 0xb0
+    }
+
+    #[test]
+    fn return_status_runs_last() {
+        let mut sat = Sat::new(MockDrive::default());
+        collect(&mut sat, Quirks::default()).unwrap();
+        let cdbs = &sat.t.cdbs;
+        let pos = cdbs
+            .iter()
+            .position(|c| is_return_status(c))
+            .expect("issued");
+        let later_ata = cdbs[pos + 1..]
+            .iter()
+            .filter(|c| c[0] == 0x85 && c[14] != 0x03)
+            .count();
+        assert_eq!(later_ata, 0, "only REQUEST SENSE may follow it");
+    }
+
+    #[test]
+    fn quirk_skips_return_status() {
+        let mut sat = Sat::new(MockDrive::default());
+        let c = collect(
+            &mut sat,
+            Quirks {
+                no_return_status: true,
+            },
+        )
+        .unwrap();
+        assert!(!sat.t.cdbs.iter().any(|c| is_return_status(c)));
+        assert_eq!(c.smart_status, Some(true));
+        assert!(c.smart_status_from_attrs);
+        assert!(c.messages.iter().any(|m| m.text.contains("skipped")));
     }
 
     #[test]
@@ -342,7 +388,7 @@ mod tests {
             ..Default::default()
         };
         let mut sat = Sat::new(drive);
-        let c = collect(&mut sat).unwrap();
+        let c = collect(&mut sat, Quirks::default()).unwrap();
         let hours: Vec<u16> = c
             .ext_selftest
             .unwrap()
@@ -367,7 +413,10 @@ mod tests {
             failing: true,
             ..Default::default()
         });
-        assert_eq!(collect(&mut sat).unwrap().smart_status, Some(false));
+        assert_eq!(
+            collect(&mut sat, Quirks::default()).unwrap().smart_status,
+            Some(false)
+        );
     }
 
     #[test]
@@ -380,7 +429,7 @@ mod tests {
             identify: identify_sector(&spec),
             ..Default::default()
         });
-        let c = collect(&mut sat).unwrap();
+        let c = collect(&mut sat, Quirks::default()).unwrap();
         assert!(c.ext_selftest.is_none());
         let pages: Vec<u8> = c.devstats.iter().map(|p| p.number).collect();
         assert_eq!(pages, [1, 3, 5]);
@@ -399,7 +448,7 @@ mod tests {
             gp_dir: log_directory_sector(&[]),
             ..Default::default()
         };
-        let c = collect(&mut Sat::new(drive)).unwrap();
+        let c = collect(&mut Sat::new(drive), Quirks::default()).unwrap();
         assert!(c.devstats.is_empty());
         assert!(c.ext_selftest.is_none());
         assert!(
@@ -417,7 +466,7 @@ mod tests {
             devstats: Vec::new(),
             ..Default::default()
         };
-        let c = collect(&mut Sat::new(drive)).unwrap();
+        let c = collect(&mut Sat::new(drive), Quirks::default()).unwrap();
         assert_eq!(c.messages.len(), 1);
         assert_eq!(c.messages[0].severity, "information");
     }
@@ -428,13 +477,13 @@ mod tests {
             identify: vec![0; 512],
             ..Default::default()
         });
-        assert!(collect(&mut sat).is_err());
+        assert!(collect(&mut sat, Quirks::default()).is_err());
     }
 
     #[test]
     fn only_read_only_commands_sent() {
         let mut sat = Sat::new(MockDrive::default());
-        collect(&mut sat).unwrap();
+        collect(&mut sat, Quirks::default()).unwrap();
         for cdb in &sat.t.cdbs {
             let (cmd, feat) = match cdb[0] {
                 0x85 => (cdb[14], cdb[4]),

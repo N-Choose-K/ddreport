@@ -33,6 +33,25 @@ pub fn chipset(vid: u16, pid: u16) -> Option<String> {
         .or_else(|| vendor(vid).map(|v| format!("{v} (unknown model)")))
 }
 
+/// Commands a bridge cannot handle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Quirks {
+    /// SMART RETURN STATUS (non-data, CK_COND) wedges the bridge until it is
+    /// re-enumerated. SMART status comes from the attribute thresholds.
+    pub no_return_status: bool,
+}
+
+pub fn quirks(vid: u16, pid: u16) -> Quirks {
+    match (vid, pid) {
+        // Observed on a CalDigit TS4: the CSW never arrives and every later
+        // command fails until the device is re-enumerated.
+        (0x1f75, 0x0611) => Quirks {
+            no_return_status: true,
+        },
+        _ => Quirks::default(),
+    }
+}
+
 /// Bridge or enclosure vendor name for a USB vendor ID.
 pub fn vendor(vid: u16) -> Option<&'static str> {
     Some(match vid {

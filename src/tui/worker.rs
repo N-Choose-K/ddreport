@@ -469,6 +469,7 @@ mod tests {
         let dev = native::UsbStorageDevice {
             bus: 0,
             address: 13,
+            location: 0x243000,
             vendor_id: 0x1f75,
             product_id: 0x0611,
             manufacturer: Some("CalDigit, Inc".into()),

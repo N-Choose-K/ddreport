@@ -69,6 +69,41 @@ pub(super) fn overview_lines(r: &DriveReport, width: u16) -> Vec<Line<'static>> 
         let all = [&right[..1], &left[..1], &right[1..], &left[1..]].concat();
         out.extend(sections(&all, w));
     }
+    let m = &r.meta;
+    let notes = m
+        .collection_errors
+        .iter()
+        .map(|e| ("Data error", e, Style::new().fg(Color::Red).bold()))
+        .chain(
+            m.warnings
+                .iter()
+                .map(|t| ("Warning", t, Style::new().fg(Color::Yellow))),
+        );
+    let mut first = true;
+    for (label, text, style) in notes {
+        if first {
+            out.push(Line::default());
+            out.push(Line::from(Span::styled(
+                "Notes",
+                Style::new().fg(Color::Cyan).bold(),
+            )));
+            first = false;
+        }
+        for (i, part) in wrap(text, w.saturating_sub(LABEL_W))
+            .into_iter()
+            .enumerate()
+        {
+            let lead = if i == 0 {
+                format!("{label:<LABEL_W$}")
+            } else {
+                " ".repeat(LABEL_W)
+            };
+            out.push(Line::from(vec![
+                Span::styled(lead, Style::new().dim()),
+                Span::styled(part, style),
+            ]));
+        }
+    }
     out
 }
 
@@ -236,7 +271,7 @@ fn bridge_rows(r: &DriveReport) -> Vec<Kv> {
 
 fn report_rows(r: &DriveReport) -> Vec<Kv> {
     let m = &r.meta;
-    let mut rows: Vec<Kv> = [
+    [
         kv("Backend", Some(m.backend.clone())),
         kv("Device", Some(m.device_path.clone())),
         kv("Type", Some(m.device_type.clone())),
@@ -244,16 +279,5 @@ fn report_rows(r: &DriveReport) -> Vec<Kv> {
     ]
     .into_iter()
     .flatten()
-    .collect();
-    rows.extend(
-        m.collection_errors
-            .iter()
-            .map(|e| ("Data error", e.clone(), Style::new().fg(Color::Red).bold())),
-    );
-    rows.extend(
-        m.warnings
-            .iter()
-            .map(|w| ("Warning", w.clone(), Style::new().fg(Color::Yellow))),
-    );
-    rows
+    .collect()
 }
