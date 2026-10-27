@@ -34,6 +34,7 @@ impl App {
                 self.set_tab(Tab::ALL[c as usize - '1' as usize]);
             }
             KeyCode::Char('r') => return self.load(self.selected).into_iter().collect(),
+            KeyCode::Char('m') => self.remount_read(),
             KeyCode::Char('R') => return self.rescan(),
             KeyCode::Char('s') => self.confirm(Confirm::Start(TestKind::Short)),
             KeyCode::Char('l') => self.confirm(Confirm::Start(TestKind::Long)),
@@ -53,6 +54,16 @@ impl App {
                 }
                 KeyCode::Char('n' | 'N' | 'q') | KeyCode::Esc => {}
                 _ => self.modal = Some(Modal::Confirm(c, target)),
+            },
+            Modal::Remount { .. } => match key.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    let Modal::Remount { key, .. } = modal else {
+                        unreachable!()
+                    };
+                    return self.remount_confirmed(&key).into_iter().collect();
+                }
+                KeyCode::Char('n' | 'N' | 'q') | KeyCode::Esc => {}
+                _ => self.modal = Some(modal),
             },
         }
         vec![]

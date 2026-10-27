@@ -21,6 +21,7 @@ use devices::draw_devices;
 use modal::draw_modal;
 use overview::overview_lines;
 use tables::{draw_attributes, draw_self_tests, draw_statistics};
+pub use text::fmt_capacity;
 
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
@@ -162,12 +163,13 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
                 spinner(app),
                 d.source.label()
             )),
-            (Some(e), false) => Paragraph::new(vec![
-                Line::from("Could not read this drive:").red().bold(),
-                Line::from(e.as_str()),
-                Line::default(),
-                Line::from("Press r to retry, or start ddreport with -d <type>.").dim(),
-            ]),
+            (Some(e), false) => {
+                let mut lines = vec![Line::from("Could not read this drive:").red().bold()];
+                lines.extend(e.lines().map(Line::from));
+                lines.push(Line::default());
+                lines.push(Line::from(d.source.retry_hint()).dim());
+                Paragraph::new(lines)
+            }
             (None, false) => Paragraph::new("Not loaded yet. Press r.").dim(),
         };
         f.render_widget(p.wrap(Wrap { trim: false }), content);
@@ -226,6 +228,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let used: usize = spans.iter().map(|s| s.width()).sum();
     let room = (area.width as usize).saturating_sub(used + 2);
     let hints = [
+        " r refresh  m remount+read  s/l/a self-test  p PDF  ? help  q quit ",
         " r refresh  s/l/a self-test  p PDF  ? help  q quit ",
         " s/l/a test  p PDF  ? help  q quit ",
         " p PDF  ? help  q quit ",

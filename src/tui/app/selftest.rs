@@ -35,8 +35,8 @@ impl App {
         let Some(d) = self.selected_device() else {
             return self.error("No drive selected");
         };
-        if d.source.live_path().is_none() {
-            return self.error("Self-tests need a live drive (this is a saved file)");
+        if let Some(why) = d.source.no_self_test_reason() {
+            return self.error(format!("Self-tests need a smartctl drive ({why})"));
         }
         if self.test_cmd_busy.contains(&d.source.key()) {
             return self.error("A self-test command is already in flight");

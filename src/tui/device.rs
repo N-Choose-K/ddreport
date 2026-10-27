@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::model::{DriveReport, Grade};
+use crate::native::{UsbDisk, UsbSelector};
 
-/// Where a device's report comes from. New backends (e.g. native USB) add a variant.
+/// Where a device's report comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceSource {
     /// Live drive read through smartctl.
@@ -13,6 +14,14 @@ pub enum DeviceSource {
         path: String,
         /// Type reported by `smartctl --scan-open`; informational only.
         scanned_type: String,
+    },
+    /// USB-SATA drive read through the native SAT backend (macOS, needs root).
+    NativeUsb {
+        selector: UsbSelector,
+        /// Bridge product name from the USB descriptors; the selector when absent.
+        bridge: String,
+        /// The disk behind the bridge, as far as the OS knows without a read.
+        disk: Option<UsbDisk>,
     },
     /// Saved `smartctl -x --json` output.
     DemoFile(PathBuf),
@@ -23,6 +32,7 @@ impl DeviceSource {
     pub fn key(&self) -> String {
         match self {
             Self::Smartctl { path, .. } => format!("smartctl:{path}"),
+            Self::NativeUsb { selector, .. } => format!("usb:{selector}"),
             Self::DemoFile(p) => format!("file:{}", p.display()),
         }
     }
@@ -30,6 +40,10 @@ impl DeviceSource {
     pub fn label(&self) -> String {
         match self {
             Self::Smartctl { path, .. } => path.clone(),
+            Self::NativeUsb { bridge, disk, .. } => disk
+                .as_ref()
+                .and_then(|k| k.media_name.clone())
+                .unwrap_or_else(|| bridge.clone()),
             Self::DemoFile(p) => p
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -37,11 +51,39 @@ impl DeviceSource {
         }
     }
 
-    /// Device path for commands that act on live hardware.
+    /// Device path for smartctl commands that act on live hardware.
     pub fn live_path(&self) -> Option<&str> {
         match self {
             Self::Smartctl { path, .. } => Some(path),
-            Self::DemoFile(_) => None,
+            Self::NativeUsb { .. } | Self::DemoFile(_) => None,
+        }
+    }
+
+    /// Mount points of the drive's volumes, when known.
+    pub fn mounts(&self) -> &[String] {
+        match self {
+            Self::NativeUsb { disk: Some(k), .. } => &k.mounts,
+            _ => &[],
+        }
+    }
+
+    /// Shown under a failed read.
+    pub fn retry_hint(&self) -> &'static str {
+        match self {
+            Self::Smartctl { .. } => "Press r to retry, or start ddreport with -d <type>.",
+            Self::NativeUsb { .. } => {
+                "m remounts and reads (unmount, read, macOS mounts it again); r retries."
+            }
+            Self::DemoFile(_) => "Press r to retry.",
+        }
+    }
+
+    /// Why self-tests cannot be started on this source; None when they can.
+    pub fn no_self_test_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Smartctl { .. } => None,
+            Self::NativeUsb { .. } => Some("the native USB backend only reads SMART data"),
+            Self::DemoFile(_) => Some("this is a saved file"),
         }
     }
 }

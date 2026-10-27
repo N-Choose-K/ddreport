@@ -6,11 +6,13 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use crate::model::DriveReport;
+use crate::native;
 use crate::report::{self, CollectOptions};
 use crate::smartctl::{self, TestKind};
 
 use super::device::{Device, DeviceSource};
 use super::export;
+use super::ui::fmt_capacity;
 
 pub const WORKER_THREAD: &str = "ddreport-worker";
 
@@ -121,6 +123,9 @@ pub enum Job {
         ticket: Ticket,
         source: DeviceSource,
         device_type: Option<String>,
+        /// Native USB: unmount the drive's volumes before the read; the OS
+        /// mounts them again afterwards.
+        remount: bool,
     },
     StartTest {
         target: TestTarget,
@@ -200,10 +205,11 @@ pub fn run(job: Job) -> Msg {
             ticket,
             source,
             device_type,
+            remount,
         } => Msg::Loaded {
             ticket,
             key: source.key(),
-            result: guarded(|| load(&source, device_type).map(Box::new)),
+            result: guarded(|| load(&source, device_type, remount).map(Box::new)),
         },
         Job::StartTest { target, kind } => Msg::TestStarted {
             result: guarded(|| self_test_command(&target, Some(kind))),
@@ -232,7 +238,7 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
             skipped: skipped.iter().map(|p| p.display().to_string()).collect(),
         });
     }
-    Ok(smartctl::scan()?
+    let mut devices: Vec<Device> = smartctl::scan()?
         .into_iter()
         .map(|d| {
             let info = format!("{} {}", d.protocol, d.info).trim().to_string();
@@ -244,8 +250,44 @@ fn scan(demo_files: Vec<PathBuf>) -> anyhow::Result<ScanOutcome> {
                 info,
             )
         })
-        .collect::<Vec<_>>()
-        .into())
+        .collect();
+    // macOS smartctl cannot open USB bridges; list them for the native backend.
+    if cfg!(target_os = "macos") {
+        let usb = native::list_devices()?;
+        devices.extend(
+            usb.iter()
+                .map(|d| usb_device(d, &usb, native::disk_info(d))),
+        );
+    }
+    Ok(devices.into())
+}
+
+fn usb_device(
+    d: &native::UsbStorageDevice,
+    all: &[native::UsbStorageDevice],
+    disk: Option<native::UsbDisk>,
+) -> Device {
+    let selector = d.unique_selector(all);
+    let bridge = d
+        .product
+        .clone()
+        .or_else(|| d.manufacturer.clone())
+        .unwrap_or_else(|| selector.to_string());
+    let info = match &disk {
+        Some(k) => {
+            let size = k.size_bytes.map(fmt_capacity).unwrap_or_default();
+            format!("USB {} {size}", k.bsd).trim_end().to_string()
+        }
+        None => format!("USB {selector}"),
+    };
+    Device::new(
+        DeviceSource::NativeUsb {
+            selector,
+            bridge,
+            disk,
+        },
+        info,
+    )
 }
 
 /// True for JSON that parses but is no single-drive report, e.g. `--scan-open`
@@ -257,18 +299,58 @@ fn is_non_report(p: &std::path::Path) -> bool {
         .is_some_and(|j| !j.get("device").is_some_and(serde_json::Value::is_object))
 }
 
-fn load(source: &DeviceSource, device_type: Option<String>) -> anyhow::Result<DriveReport> {
+fn load(
+    source: &DeviceSource,
+    device_type: Option<String>,
+    remount: bool,
+) -> anyhow::Result<DriveReport> {
     match source {
         DeviceSource::Smartctl { path, .. } => report::collect(&CollectOptions {
             device: path.clone(),
             device_type,
         }),
+        DeviceSource::NativeUsb { selector, .. } => {
+            if cfg!(target_os = "macos") && !native::is_root() {
+                anyhow::bail!(
+                    "needs root: macOS only lets root take a USB device away from its \
+                     driver, which is the only way to reach SMART data behind a bridge.\n\
+                     Run `sudo ddreport`."
+                );
+            }
+            if !remount {
+                let devs = native::list_devices()?;
+                let mounts = native::disk_info(native::select(&devs, selector)?)
+                    .map(|k| k.mounts)
+                    .unwrap_or_default();
+                if !mounts.is_empty() {
+                    anyhow::bail!(
+                        "its volumes are mounted:\n  - {}\n\
+                         macOS has no SMART passthrough for USB drives: the only way to read \
+                         them is to take the device away from macOS for a few seconds, and \
+                         that cannot happen while volumes are mounted.\n\
+                         Press m to remount: unmount, read, and let macOS mount them again.",
+                        mounts.join("\n  - ")
+                    );
+                }
+            }
+            report::from_native(selector, false, remount)
+                .map(|(r, _)| r)
+                .map_err(|e| anyhow::anyhow!("{}", cli_force_hint(&format!("{e:#}"), selector)))
+        }
         DeviceSource::DemoFile(p) => {
             let raw = std::fs::read_to_string(p)
                 .map_err(|e| anyhow::anyhow!("reading {}: {e}", p.display()))?;
             report::from_smartctl_json(&raw, &p.display().to_string())
         }
     }
+}
+
+/// The native backend's `--force` advice points at the CLI; the TUI has no such key.
+fn cli_force_hint(msg: &str, selector: &native::UsbSelector) -> String {
+    msg.replace(
+        "Pass --force to continue anyway.",
+        &format!("To continue anyway run: sudo ddreport report --usb {selector} --force"),
+    )
 }
 
 /// Runs `f`, turning both errors and panics into a message string.
@@ -383,6 +465,108 @@ mod tests {
     }
 
     #[test]
+    fn usb_device_names_and_selects_the_bridge() {
+        let dev = native::UsbStorageDevice {
+            bus: 0,
+            address: 13,
+            vendor_id: 0x1f75,
+            product_id: 0x0611,
+            manufacturer: Some("CalDigit, Inc".into()),
+            product: Some("TS4 HUB".into()),
+            serial: Some("2015".into()),
+            transport: native::Transport::Bot,
+            speed: Some("USB 3.x SuperSpeed (5 Gb/s)".into()),
+            interface: 0,
+        };
+        let d = usb_device(&dev, std::slice::from_ref(&dev), None);
+        assert_eq!(
+            d.source.label(),
+            "TS4 HUB",
+            "bridge name until the disk is known"
+        );
+        assert_eq!(d.source.key(), "usb:1f75:0611:2015");
+        assert_eq!(d.info, "USB 1f75:0611:2015");
+
+        let disk = native::UsbDisk {
+            bsd: "disk4".into(),
+            media_name: Some("CT1050MX300SSD1".into()),
+            size_bytes: Some(1_050_214_588_416),
+            mounts: vec!["/Volumes/macOS".into()],
+        };
+        let d = usb_device(&dev, std::slice::from_ref(&dev), Some(disk));
+        assert_eq!(d.source.label(), "CT1050MX300SSD1");
+        assert_eq!(d.info, "USB disk4 1.05 TB");
+        assert_eq!(d.source.mounts(), ["/Volumes/macOS"]);
+        assert!(d.source.live_path().is_none());
+        assert!(d.source.no_self_test_reason().is_some());
+
+        // Serials are kept verbatim so the selector matches the descriptor.
+        let odd = native::UsbStorageDevice {
+            serial: Some("a:b ".into()),
+            ..dev.clone()
+        };
+        let d = usb_device(&odd, std::slice::from_ref(&odd), None);
+        assert_eq!(d.source.key(), "usb:1f75:0611:a:b ");
+
+        let bare = native::UsbStorageDevice {
+            manufacturer: None,
+            product: None,
+            serial: None,
+            speed: None,
+            ..dev
+        };
+        let d = usb_device(&bare, std::slice::from_ref(&bare), None);
+        assert_eq!(d.source.label(), "1f75:0611");
+        assert_eq!(d.info, "USB 1f75:0611");
+
+        // Two bridges with the same IDs and no serial: keyed by bus:addr.
+        let twin = native::UsbStorageDevice {
+            address: 14,
+            ..bare.clone()
+        };
+        let all = vec![bare, twin];
+        assert_eq!(usb_device(&all[0], &all, None).source.key(), "usb:0:13");
+        assert_eq!(usb_device(&all[1], &all, None).source.key(), "usb:0:14");
+    }
+
+    #[test]
+    fn force_advice_points_at_the_cli() {
+        let e = crate::native::busy::decide(&[], &["lsof not found".into()], false).unwrap_err();
+        let sel: native::UsbSelector = "1f75:0611:S1".parse().unwrap();
+        let m = cli_force_hint(&format!("{e:#}"), &sel);
+        assert!(m.contains("lsof not found"));
+        assert!(
+            m.ends_with("sudo ddreport report --usb 1f75:0611:S1 --force"),
+            "{m}"
+        );
+        assert!(!m.contains("Pass --force"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn usb_load_without_root_says_so() {
+        if native::is_root() {
+            return;
+        }
+        let Msg::Loaded { result, .. } = run(Job::Load {
+            ticket: Ticket {
+                generation: 0,
+                req: 0,
+            },
+            source: DeviceSource::NativeUsb {
+                selector: "ffff:ffff".parse().unwrap(),
+                bridge: "x".into(),
+                disk: None,
+            },
+            device_type: None,
+            remount: false,
+        }) else {
+            panic!("expected load result");
+        };
+        assert!(result.unwrap_err().contains("sudo ddreport"));
+    }
+
+    #[test]
     fn demo_load_reports_missing_file() {
         let Msg::Loaded { result, .. } = run(Job::Load {
             ticket: Ticket {
@@ -391,6 +575,7 @@ mod tests {
             },
             source: DeviceSource::DemoFile("/nonexistent/a.json".into()),
             device_type: None,
+            remount: false,
         }) else {
             panic!("expected load result");
         };

@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
         }
         [sel, rest @ ..] if !sel.starts_with('-') && (rest.is_empty() || rest == ["--force"]) => {
             let sel: UsbSelector = sel.parse()?;
-            let r = native::read_smart(&sel, !rest.is_empty())?;
+            let r = native::read_smart(&sel, !rest.is_empty(), false)?;
             eprintln!("bridge: {:?}", r.bridge);
             if let Some(i) = &r.bridge_inquiry {
                 eprintln!("bridge INQUIRY: {i}");

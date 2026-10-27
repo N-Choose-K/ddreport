@@ -1,6 +1,7 @@
 //! UI state and pure update logic: keys and worker messages in, jobs out.
 
 mod keys;
+mod remount;
 mod selftest;
 #[cfg(test)]
 mod tests;
@@ -74,6 +75,14 @@ pub enum Confirm {
 pub enum Modal {
     Help,
     Confirm(Confirm, TestTarget),
+    /// Unmount a USB drive's volumes, read it through the native backend,
+    /// and let the OS mount them again.
+    Remount {
+        key: String,
+        label: String,
+        bridge: String,
+        mounts: Vec<String>,
+    },
     Message {
         title: String,
         body: String,

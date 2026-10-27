@@ -17,6 +17,7 @@ use ratatui::DefaultTerminal;
 
 pub use device::{Device, DeviceSource};
 pub use export::{export_filename, sanitize};
+pub use ui::fmt_capacity;
 
 use app::App;
 use worker::{Job, Msg};

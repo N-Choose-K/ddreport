@@ -29,7 +29,8 @@ impl App {
             Msg::Scanned(Ok(ScanOutcome { devices, skipped })) => {
                 self.scanning = false;
                 self.generation += 1;
-                let cancelled = matches!(self.modal, Some(Modal::Confirm(..)));
+                let cancelled =
+                    matches!(self.modal, Some(Modal::Confirm(..) | Modal::Remount { .. }));
                 if cancelled {
                     self.modal = None;
                 }
@@ -138,6 +139,11 @@ impl App {
     }
 
     pub(super) fn load(&mut self, idx: usize) -> Option<Job> {
+        self.load_with(idx, false)
+    }
+
+    /// `remount`: native USB only; unmount the drive's volumes before the read.
+    pub(super) fn load_with(&mut self, idx: usize, remount: bool) -> Option<Job> {
         let device_type = self.device_type.clone();
         let ticket = Ticket {
             generation: self.generation,
@@ -154,6 +160,7 @@ impl App {
             ticket,
             source: d.source.clone(),
             device_type,
+            remount,
         })
     }
 

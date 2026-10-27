@@ -35,9 +35,14 @@ pub fn from_smartctl_json(raw: &str, device_path: &str) -> anyhow::Result<DriveR
 
 /// Reads a USB-SATA drive through the native SAT backend and grades it.
 /// Returns the report and the raw smartctl-shaped JSON it was built from.
-/// `force` only skips busy-disk checks that cannot be completed.
-pub fn from_native(sel: &UsbSelector, force: bool) -> anyhow::Result<(DriveReport, String)> {
-    let res = native::read_smart(sel, force)?;
+/// `unmount` unmounts the drive's volumes first; `force` only skips busy-disk
+/// checks that cannot be completed.
+pub fn from_native(
+    sel: &UsbSelector,
+    force: bool,
+    unmount: bool,
+) -> anyhow::Result<(DriveReport, String)> {
+    let res = native::read_smart(sel, force, unmount)?;
     let raw = serde_json::to_string_pretty(&res.json)?;
     let mut r = from_smartctl_json(&raw, &sel.to_string())?;
     r.bridge = Some(res.bridge);

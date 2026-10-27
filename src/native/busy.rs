@@ -3,7 +3,7 @@
 //! in progress). Detected use always refuses; `force` only skips checks that
 //! could not be completed (unmapped disk, missing lsof, no root).
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use super::UsbStorageDevice;
 
@@ -312,10 +312,109 @@ pub fn decide(blockers: &[String], unverified: &[String], force: bool) -> Result
         .collect())
 }
 
+/// BSD names of every disk below the USB device in the IORegistry.
 #[cfg(target_os = "macos")]
-fn is_root() -> bool {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() == 0 }
+pub fn macos_disks(dev: &UsbStorageDevice) -> Result<Vec<String>> {
+    let o = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-a", "-r", "-c", "IOUSBHostDevice", "-l"])
+        .output()
+        .context("running ioreg")?;
+    if !o.status.success() {
+        bail!("ioreg failed: {}", o.status);
+    }
+    ioreg_bsd_names(&o.stdout, dev)?
+        .ok_or_else(|| anyhow!("USB device not found in the IORegistry"))
+}
+
+/// Disks unmounted for a read. Dropping it remounts them unless `keep` was
+/// called: once the device is captured, re-enumeration remounts them.
+#[derive(Debug)]
+pub struct Unmounted {
+    disks: Vec<String>,
+    armed: bool,
+    remount: fn(&str),
+}
+
+impl Unmounted {
+    fn new(remount: fn(&str)) -> Self {
+        Self {
+            disks: Vec::new(),
+            armed: true,
+            remount,
+        }
+    }
+
+    pub fn disks(&self) -> &[String] {
+        &self.disks
+    }
+
+    /// Leaves the disks unmounted.
+    pub fn keep(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Unmounted {
+    fn drop(&mut self) {
+        if self.armed {
+            for d in &self.disks {
+                (self.remount)(d);
+            }
+        }
+    }
+}
+
+/// Unmounts the whole disks in order, undoing on failure.
+fn unmount_with(
+    disks: &[String],
+    mut unmount: impl FnMut(&str) -> Result<()>,
+    remount: fn(&str),
+) -> Result<Unmounted> {
+    let mut done = Unmounted::new(remount);
+    for d in disks {
+        // Registered first: unmountDisk can fail after unmounting some volumes.
+        done.disks.push(d.clone());
+        unmount(d)?;
+    }
+    Ok(done)
+}
+
+#[cfg(target_os = "macos")]
+fn diskutil(args: &[&str]) -> Result<()> {
+    let o = std::process::Command::new("/usr/sbin/diskutil")
+        .args(args)
+        .output()
+        .context("running diskutil")?;
+    if !o.status.success() {
+        let err = String::from_utf8_lossy(&o.stderr);
+        let out = String::from_utf8_lossy(&o.stdout);
+        let last = err
+            .trim()
+            .lines()
+            .chain(out.trim().lines())
+            .last()
+            .unwrap_or("failed");
+        bail!("diskutil {}: {last}", args.join(" "));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn remount_disk(disk: &str) {
+    // Best effort; the drive stays attached and the user can mount it by hand.
+    let _ = diskutil(&["mountDisk", disk]);
+}
+
+/// Unmounts every volume on the device's disks.
+#[cfg(target_os = "macos")]
+pub fn unmount(dev: &UsbStorageDevice) -> Result<Unmounted> {
+    let disks = super::diskinfo::whole_disks(&macos_disks(dev)?);
+    unmount_with(&disks, |d| diskutil(&["unmountDisk", d]), remount_disk)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn unmount(_dev: &UsbStorageDevice) -> Result<Unmounted> {
+    bail!("unmounting before the read is only implemented on macOS")
 }
 
 /// Checks the device's disk is idle before its driver is detached.
@@ -377,7 +476,7 @@ pub fn ensure_idle(dev: &UsbStorageDevice, force: bool) -> Result<Vec<String>> {
             Vec::new()
         }
     };
-    if !is_root() {
+    if !super::is_root() {
         unverified.push("not running as root; lsof cannot see other users' processes".into());
     }
     decide(
@@ -803,6 +902,39 @@ mod tests {
   </dict>
 </array>
 </plist>"#;
+
+    static REMOUNTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    fn record(d: &str) {
+        REMOUNTED.lock().unwrap().push(d.to_owned());
+    }
+    fn remounted() -> Vec<String> {
+        std::mem::take(&mut *REMOUNTED.lock().unwrap())
+    }
+
+    #[test]
+    fn unmount_undoes_on_failure_and_on_drop_unless_kept() {
+        let disks: Vec<String> = ["disk4", "disk5", "disk6"].map(String::from).to_vec();
+        let e = unmount_with(
+            &disks,
+            |d| if d == "disk6" { bail!("busy") } else { Ok(()) },
+            record,
+        )
+        .unwrap_err();
+        assert_eq!(e.to_string(), "busy");
+        assert_eq!(
+            remounted(),
+            ["disk4", "disk5", "disk6"],
+            "the failed disk too: it may be half unmounted"
+        );
+
+        let u = unmount_with(&disks, |_| Ok(()), record).unwrap();
+        assert_eq!(u.disks(), disks);
+        drop(u);
+        assert_eq!(remounted(), disks, "nothing captured: remount all");
+
+        unmount_with(&disks, |_| Ok(()), record).unwrap().keep();
+        assert!(remounted().is_empty(), "captured: re-enumeration remounts");
+    }
 
     #[test]
     fn ioreg_maps_device_to_disks() {
