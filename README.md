@@ -27,6 +27,7 @@ printable certificate.
 ```sh
 ddreport scan                                  # list drives
 sudo ddreport test /dev/sdb long               # start an extended self-test
+sudo ddreport test --usb 1f75:0611 short --remount  # same over USB (selector as for report)
 sudo ddreport report /dev/sdb -o wd-red.pdf
 ddreport report --from-json saved.json         # from saved `smartctl -x --json`
 ddreport scan --usb                            # list USB mass-storage devices
@@ -56,10 +57,14 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
   `--force` only skips checks that can't be completed (disk not found in the
   IORegistry or sysfs, `lsof` missing or failing, or no root privileges); a
   detected mount or open file always stops the run.
-- The native backend sends only read commands (IDENTIFY, SMART READ
+- The native backend sends read commands (IDENTIFY, SMART READ
   DATA/THRESHOLDS/LOG, SMART RETURN STATUS, READ LOG EXT) through SAT
-  ATA PASS-THROUGH over USB Bulk-Only Transport. It works on Linux too, where
+  ATA PASS-THROUGH over USB Bulk-Only Transport, plus SMART EXECUTE OFF-LINE
+  IMMEDIATE when you start or abort a self-test. It works on Linux too, where
   it detaches and reattaches `usb-storage`/`uas`.
+- Self-tests through a bridge: the TUI's `s`/`l`/`a` keys work on USB entries;
+  each command and each progress read (once a minute while a test runs)
+  unmounts the drive briefly and macOS mounts it again.
 
 ## Development
 

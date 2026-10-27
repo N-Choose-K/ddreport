@@ -370,6 +370,7 @@ mod tests {
             &mut sat,
             Quirks {
                 no_return_status: true,
+                ..Quirks::default()
             },
         )
         .unwrap();

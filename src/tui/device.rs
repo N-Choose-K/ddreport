@@ -81,8 +81,7 @@ impl DeviceSource {
     /// Why self-tests cannot be started on this source; None when they can.
     pub fn no_self_test_reason(&self) -> Option<&'static str> {
         match self {
-            Self::Smartctl { .. } => None,
-            Self::NativeUsb { .. } => Some("the native USB backend only reads SMART data"),
+            Self::Smartctl { .. } | Self::NativeUsb { .. } => None,
             Self::DemoFile(_) => Some("this is a saved file"),
         }
     }

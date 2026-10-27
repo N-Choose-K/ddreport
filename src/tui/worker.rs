@@ -23,12 +23,24 @@ pub struct Ticket {
     pub req: u64,
 }
 
+/// How a self-test command reaches the drive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestVia {
+    Smartctl {
+        path: String,
+        dev_type: Option<String>,
+    },
+    /// Native backend; the drive is unmounted for the command and mounted again.
+    NativeUsb { selector: native::UsbSelector },
+}
+
 /// The drive a self-test command was confirmed for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestTarget {
     pub key: String,
-    pub path: String,
-    pub dev_type: Option<String>,
+    /// Shown in the confirmation.
+    pub label: String,
+    pub via: TestVia,
     pub generation: u64,
     pub model: Option<String>,
     pub serial: Option<String>,
@@ -61,9 +73,9 @@ pub fn check_reached(
 ) -> Result<(), String> {
     let (Some(m), Some(s)) = (model, serial) else {
         return Err(format!(
-            "smartctl did not report which drive at {} received the command; check the drive \
-             and press r",
-            target.path
+            "the backend did not report which drive at {} received the command; check the \
+             drive and press r",
+            target.label
         ));
     };
     if target.verify(model, serial).is_ok() {
@@ -90,28 +102,40 @@ pub fn check_reached(
 /// and a swap in that window is reported to the user. The residual risk is acceptable:
 /// self-tests and aborts are non-destructive (a self-test only reads the media).
 fn self_test_command(target: &TestTarget, kind: Option<TestKind>) -> anyhow::Result<String> {
-    verify_identity(target)?;
-    let dev_type = target.dev_type.as_deref();
-    let out = match kind {
-        Some(k) => smartctl::start_self_test_identified(&target.path, dev_type, k)?,
-        None => smartctl::abort_self_test_identified(&target.path, dev_type)?,
+    let (message, model, serial) = match &target.via {
+        TestVia::Smartctl { path, dev_type } => {
+            verify_identity(target, path, dev_type.as_deref())?;
+            let out = match kind {
+                Some(k) => smartctl::start_self_test_identified(path, dev_type.as_deref(), k)?,
+                None => smartctl::abort_self_test_identified(path, dev_type.as_deref())?,
+            };
+            (out.message, out.model, out.serial)
+        }
+        // One session: IDENTIFY must match the confirmed drive before the
+        // command goes out. Unmounts first; the OS mounts the volumes again.
+        TestVia::NativeUsb { selector } => {
+            let expected = match (&target.model, &target.serial) {
+                (Some(model), Some(serial)) => native::Expected {
+                    model: model.clone(),
+                    serial: serial.clone(),
+                },
+                _ => anyhow::bail!("refused: the confirmed drive's identity is unknown"),
+            };
+            let out = native::self_test(selector, kind, Some(&expected), false, true)?;
+            (out.message, Some(out.model), Some(out.serial))
+        }
     };
-    check_reached(
-        target,
-        kind.is_none(),
-        out.model.as_deref(),
-        out.serial.as_deref(),
-    )
-    .map_err(anyhow::Error::msg)?;
-    Ok(out.message)
+    check_reached(target, kind.is_none(), model.as_deref(), serial.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    Ok(message)
 }
 
-/// Re-identifies the drive at the target path; refuses if it is not the confirmed one.
-fn verify_identity(target: &TestTarget) -> anyhow::Result<()> {
-    let (model, serial) = smartctl::identify(&target.path, target.dev_type.as_deref())?;
+/// Re-identifies the drive at the path; refuses if it is not the confirmed one.
+fn verify_identity(target: &TestTarget, path: &str, dev_type: Option<&str>) -> anyhow::Result<()> {
+    let (model, serial) = smartctl::identify(path, dev_type)?;
     target
         .verify(model.as_deref(), serial.as_deref())
-        .map_err(|e| anyhow::anyhow!("refused, {} may be a different drive: {e}", target.path))
+        .map_err(|e| anyhow::anyhow!("refused, {path} may be a different drive: {e}"))
 }
 
 #[derive(Debug, Clone)]
@@ -171,7 +195,8 @@ pub enum Msg {
     },
     TestAborted {
         target: TestTarget,
-        result: Result<(), String>,
+        /// The backend's message; it may say the abort is unconfirmed.
+        result: Result<String, String>,
     },
     Exported(Result<PathBuf, String>),
 }
@@ -217,7 +242,7 @@ pub fn run(job: Job) -> Msg {
             kind,
         },
         Job::AbortTest { target } => Msg::TestAborted {
-            result: guarded(|| self_test_command(&target, None).map(|_| ())),
+            result: guarded(|| self_test_command(&target, None)),
             target,
         },
         Job::Export { report, out_dir } => {
@@ -387,8 +412,11 @@ mod tests {
     fn target(model: Option<&str>, serial: Option<&str>) -> TestTarget {
         TestTarget {
             key: "smartctl:/dev/a".into(),
-            path: "/dev/a".into(),
-            dev_type: Some("sat".into()),
+            label: "/dev/a".into(),
+            via: TestVia::Smartctl {
+                path: "/dev/a".into(),
+                dev_type: Some("sat".into()),
+            },
             generation: 1,
             model: model.map(Into::into),
             serial: serial.map(Into::into),
@@ -499,7 +527,10 @@ mod tests {
         assert_eq!(d.info, "USB disk4 1.05 TB");
         assert_eq!(d.source.mounts(), ["/Volumes/macOS"]);
         assert!(d.source.live_path().is_none());
-        assert!(d.source.no_self_test_reason().is_some());
+        assert!(
+            d.source.no_self_test_reason().is_none(),
+            "self-tests run natively"
+        );
 
         // Serials are kept verbatim so the selector matches the descriptor.
         let odd = native::UsbStorageDevice {

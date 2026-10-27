@@ -33,12 +33,21 @@ enum Cmd {
     Report(Box<ReportArgs>),
     /// Start or abort a SMART self-test.
     Test {
+        /// Device path, or with --usb a selector as for `report --usb`.
         device: String,
         #[arg(value_enum, default_value = "short")]
         kind: Kind,
         /// smartctl -d type (e.g. sat, sntjmicron).
-        #[arg(short = 'd', long)]
+        #[arg(short = 'd', long, conflicts_with = "usb")]
         device_type: Option<String>,
+        /// DEVICE is a USB selector; send the command over USB directly (no
+        /// smartctl). Needs root on macOS.
+        #[arg(long)]
+        usb: bool,
+        /// With --usb: unmount the drive's volumes first; macOS mounts them
+        /// again afterwards.
+        #[arg(long, requires = "usb")]
+        remount: bool,
     },
 }
 
@@ -137,17 +146,28 @@ fn main() -> anyhow::Result<()> {
             device,
             kind,
             device_type,
+            usb,
+            remount,
         }) => {
-            let t = device_type.as_deref();
             let kind = match kind {
-                Kind::Abort => {
-                    smartctl::abort_self_test(&device, t)?;
-                    println!("Self-test aborted");
-                    return Ok(());
-                }
-                Kind::Short => TestKind::Short,
-                Kind::Long => TestKind::Long,
-                Kind::Conveyance => TestKind::Conveyance,
+                Kind::Abort => None,
+                Kind::Short => Some(TestKind::Short),
+                Kind::Long => Some(TestKind::Long),
+                Kind::Conveyance => Some(TestKind::Conveyance),
+            };
+            if usb {
+                let sel: UsbSelector = device.parse()?;
+                println!(
+                    "{}",
+                    native::self_test(&sel, kind, None, false, remount)?.message
+                );
+                return Ok(());
+            }
+            let t = device_type.as_deref();
+            let Some(kind) = kind else {
+                smartctl::abort_self_test(&device, t)?;
+                println!("Self-test aborted");
+                return Ok(());
             };
             println!("{}", smartctl::start_self_test(&device, t, kind)?);
             Ok(())
@@ -264,6 +284,21 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once("ddreport").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn test_usb_flag() {
+        for args in [
+            ["test", "--usb", "1f75:0611", "short", "--remount"],
+            ["test", "--usb", "1f75:0611", "abort", "--remount"],
+        ] {
+            let Some(Cmd::Test { usb, remount, .. }) = parse(&args).unwrap().cmd else {
+                panic!("expected test command");
+            };
+            assert!(usb && remount, "{args:?}");
+        }
+        assert!(parse(&["test", "--usb", "1f75:0611", "long", "-d", "sat"]).is_err());
+        assert!(parse(&["test", "/dev/sdb", "long", "--remount"]).is_err());
     }
 
     #[test]

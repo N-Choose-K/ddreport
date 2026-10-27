@@ -29,6 +29,7 @@ pub mod diskinfo;
 pub mod json;
 pub mod sat;
 pub mod scsi;
+pub mod selftest;
 pub mod usb;
 
 #[cfg(test)]
@@ -256,6 +257,26 @@ pub fn is_root() -> bool {
 /// to any device.
 pub fn list_devices() -> Result<Vec<UsbStorageDevice>> {
     usb::list_devices()
+}
+
+pub use selftest::{Expected, TestOutcome};
+
+/// Starts (`kind` set) or aborts a self-test on the selected USB-SATA drive.
+/// Same capture rules as `read_smart`.
+pub fn self_test(
+    sel: &UsbSelector,
+    kind: Option<crate::smartctl::TestKind>,
+    expected: Option<&Expected>,
+    force: bool,
+    unmount: bool,
+) -> Result<TestOutcome> {
+    let devs = list_devices()?;
+    let dev = select(&devs, sel)?;
+    let quirks = bridges::quirks(dev.vendor_id, dev.product_id);
+    let (out, _) = usb::with_sat(dev, force, unmount, |sat| {
+        selftest::run(sat, kind, expected, quirks)
+    })?;
+    Ok(out)
 }
 
 /// Reads identity and SMART data from the selected USB-SATA drive. Refuses if

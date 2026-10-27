@@ -18,6 +18,7 @@ pub const SMART_READ_DATA: u8 = 0xd0;
 pub const SMART_READ_THRESHOLDS: u8 = 0xd1;
 pub const SMART_READ_LOG: u8 = 0xd5;
 pub const SMART_RETURN_STATUS: u8 = 0xda;
+pub const SMART_EXECUTE_OFFLINE: u8 = 0xd4;
 
 const SMART_LBA: u64 = 0xc2_4f00;
 
@@ -27,7 +28,7 @@ const PROTO_PIO_IN: u8 = 4;
 const FLAGS_PIO_IN: u8 = 0x08 | 0x04 | 0x02;
 const CK_COND: u8 = 0x20;
 
-const TIMEOUT: Duration = Duration::from_secs(20);
+pub const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The read-only ATA commands this module can build. There is no variant
 /// that writes, starts a self-test, enables features or changes state.
@@ -39,6 +40,9 @@ pub enum AtaCmd {
     /// SMART READ LOG: log address, sector count.
     SmartReadLog(u8, u8),
     SmartReturnStatus,
+    /// SMART EXECUTE OFF-LINE IMMEDIATE: subcommand (1 short, 2 extended,
+    /// 3 conveyance, 0x7f abort).
+    SmartExecuteOffline(u8),
     /// READ LOG EXT: log address, first page, page count.
     ReadLogExt(u8, u16, u16),
 }
@@ -73,6 +77,7 @@ impl AtaCmd {
             AtaCmd::SmartReadThresholds => smart(SMART_READ_THRESHOLDS, 0, 1),
             AtaCmd::SmartReadLog(log, n) => smart(SMART_READ_LOG, log, n),
             AtaCmd::SmartReturnStatus => smart(SMART_RETURN_STATUS, 0, 0),
+            AtaCmd::SmartExecuteOffline(sub) => smart(SMART_EXECUTE_OFFLINE, sub, 0),
             AtaCmd::ReadLogExt(log, page, n) => Taskfile {
                 command: ATA_READ_LOG_EXT,
                 count: n,
@@ -86,7 +91,7 @@ impl AtaCmd {
     /// Bytes returned in the data-in phase.
     pub fn data_len(self) -> usize {
         match self {
-            AtaCmd::SmartReturnStatus => 0,
+            AtaCmd::SmartReturnStatus | AtaCmd::SmartExecuteOffline(_) => 0,
             _ => self.taskfile().count as usize * 512,
         }
     }
@@ -199,14 +204,24 @@ impl<T: ScsiTransport> Sat<T> {
         data: &mut [u8],
         ck_cond: bool,
     ) -> Result<(ScsiStatus, usize, Option<Sense>)> {
+        self.exec_within(tf, data, ck_cond, TIMEOUT)
+    }
+
+    fn exec_within(
+        &mut self,
+        tf: &Taskfile,
+        data: &mut [u8],
+        ck_cond: bool,
+        timeout: Duration,
+    ) -> Result<(ScsiStatus, usize, Option<Sense>)> {
         let data_in = !data.is_empty();
         loop {
             let out = match self.size {
                 PtSize::Sixteen => self
                     .t
-                    .execute(&cdb16(tf, data_in, ck_cond), data, TIMEOUT)?,
+                    .execute(&cdb16(tf, data_in, ck_cond), data, timeout)?,
                 PtSize::Twelve => match cdb12(tf, data_in, ck_cond) {
-                    Some(c) => self.t.execute(&c, data, TIMEOUT)?,
+                    Some(c) => self.t.execute(&c, data, timeout)?,
                     None => {
                         bail!("bridge only supports PASS-THROUGH(12); 48-bit command unavailable")
                     }
@@ -282,6 +297,29 @@ impl<T: ScsiTransport> Sat<T> {
         match scsi::parse_sense(&raw).and_then(|s| s.ata) {
             Some(a) => checked(a),
             None => Ok(None),
+        }
+    }
+
+    /// Runs a non-data command without CK_COND; only success or failure matters.
+    /// Some bridges return the ATA registers as recovered-error sense even on
+    /// success; that counts as success unless the ATA status has ERR set.
+    pub fn non_data_plain(&mut self, cmd: AtaCmd) -> Result<()> {
+        self.non_data_plain_within(cmd, TIMEOUT)
+    }
+
+    /// As `non_data_plain` with an explicit CSW timeout.
+    pub fn non_data_plain_within(&mut self, cmd: AtaCmd, timeout: Duration) -> Result<()> {
+        let (status, _, sense) = self.exec_within(&cmd.taskfile(), &mut [], false, timeout)?;
+        if status != ScsiStatus::CheckCondition {
+            return Ok(());
+        }
+        let Some(s) = sense else {
+            bail!("CHECK CONDITION without sense data");
+        };
+        match s.ata {
+            Some(a) if a.is_error() => Err(SatError::AtaAborted(a).into()),
+            Some(_) if matches!(s.key, scsi::KEY_NO_SENSE | scsi::KEY_RECOVERED_ERROR) => Ok(()),
+            _ => Err(SatError::Rejected(s).into()),
         }
     }
 
