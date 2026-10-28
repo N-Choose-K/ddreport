@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
 jobs:
   bump:
     if: ${{ !startsWith(github.event.head_commit.message, 'release: v') }}
@@ -21,18 +25,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
+          ref: main
+      - name: Skip if main already carries a release commit
+        id: head
+        run: |
+          if git log -1 --format=%s | grep -q '^release: v'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
       - name: Bump patch version
+        if: steps.head.outputs.skip != 'true'
         id: bump
         run: |
           current=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ddreport") | .version')
           next=$(echo "$current" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')
           sed -i "s/^version = \"$current\"/version = \"$next\"/" Cargo.toml
-          cargo update --workspace --offline
+          cargo update --workspace
           echo "version=$next" >> "$GITHUB_OUTPUT"
       - name: Commit and tag
+        if: steps.head.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           VERSION: ${{ steps.bump.outputs.version }}
@@ -44,4 +57,4 @@ jobs:
           git add Cargo.toml Cargo.lock
           git commit -m "release: v$VERSION"
           git tag "v$VERSION"
-          git push origin HEAD:main "v$VERSION"
+          git push --atomic origin HEAD:main "v$VERSION"
