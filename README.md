@@ -72,10 +72,10 @@ which one worked. `--save-raw` keeps the raw smartctl JSON alongside the PDF.
 ## Install
 
 ```sh
-cargo install --git ssh://git@github.com/nortagawa/ddreport
+cargo install --git ssh://git@github.com/N-Choose-K/ddreport
 ```
 
-Update with `cargo install --force --git ssh://git@github.com/nortagawa/ddreport`
+Update with `cargo install --force --git ssh://git@github.com/N-Choose-K/ddreport`
 (cargo skips a reinstall of the same version without `--force`). `smartctl`
 (smartmontools) must be on PATH for the smartctl backend. On macOS with a nix or Homebrew `cc` first on PATH,
 point cargo at Apple's toolchain in `~/.cargo/config.toml` (the repo's own
