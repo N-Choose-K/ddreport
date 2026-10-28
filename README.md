@@ -1,5 +1,9 @@
 # ddreport
 
+[![CI](https://github.com/N-Choose-K/ddreport/actions/workflows/ci.yml/badge.svg)](https://github.com/N-Choose-K/ddreport/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/N-Choose-K/ddreport/badge)](https://scorecard.dev/viewer/?uri=github.com/N-Choose-K/ddreport)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 One-page drive health report (PDF) for hard drives and SSDs. It reads the
 drive's identity and SMART data, grades it PASS / CAUTION / FAIL, and renders a
 printable certificate.
