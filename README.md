@@ -8,6 +8,28 @@ One-page drive health report (PDF) for hard drives and SSDs. It reads the
 drive's identity and SMART data, grades it PASS / CAUTION / FAIL, and renders a
 printable certificate.
 
+## Interactive TUI
+
+`sudo ddreport` with no arguments opens the TUI: it lists attached drives,
+reads each one on selection, grades it, and exports the PDF with `p`.
+Self-tests start from the same screen (`s` short, `l` long, `a` abort).
+
+![TUI overview of a healthy drive](docs/tui-overview.png)
+
+A failing drive, with the findings that drive the verdict:
+
+![TUI overview of a failing drive](docs/tui-failing.png)
+
+The attribute tab colours failed and sector-related attributes:
+
+![TUI attribute table](docs/tui-attributes.png)
+
+`ddreport tui --demo fixtures/*.json` browses saved `smartctl -x --json` files
+without touching hardware; `docs/tui.tape` regenerates these screenshots
+with [vhs](https://github.com/charmbracelet/vhs).
+
+## The certificate
+
 ![Sample certificate](docs/sample-wd-red-usb.png)
 
 ## What the certificate shows
