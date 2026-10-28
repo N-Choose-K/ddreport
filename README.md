@@ -104,3 +104,14 @@ cargo run -- report --from-json fixtures/sata_hdd_wd_red_usb.json -o /tmp/wd.pdf
 
 Sample images under `docs/` are stored with Git LFS; the fonts under
 `assets/fonts/` are plain blobs so `cargo install --git` can embed them.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. Contributions are accepted under
+the same dual license.
+
+Bundled third-party material: the Overpass fonts under `assets/fonts/` are
+licensed under the [SIL Open Font License 1.1](assets/fonts/OFL-Overpass.txt);
+the USB backend statically links libusb (LGPL-2.1-or-later) through the
+`rusb` crate's vendored build.
