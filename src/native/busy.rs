@@ -3,7 +3,9 @@
 //! in progress). Detected use always refuses; `force` only skips checks that
 //! could not be completed (unmapped disk, missing lsof, no root).
 
-use anyhow::{Context, Result, anyhow, bail};
+#[cfg(target_os = "macos")]
+use anyhow::{Context, anyhow};
+use anyhow::{Result, bail};
 
 use super::UsbStorageDevice;
 
@@ -381,6 +383,7 @@ pub struct Unmounted {
 }
 
 impl Unmounted {
+    #[cfg(any(target_os = "macos", test))]
     fn new(remount: fn(&str)) -> Self {
         Self {
             disks: Vec::new(),
@@ -410,6 +413,7 @@ impl Drop for Unmounted {
 }
 
 /// Unmounts the whole disks in order, undoing on failure.
+#[cfg(any(target_os = "macos", test))]
 fn unmount_with(
     disks: &[String],
     mut unmount: impl FnMut(&str) -> Result<()>,
