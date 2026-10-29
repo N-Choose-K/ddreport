@@ -42,11 +42,13 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-      # Rust keeps the default category that main already uploads under, so its
-      # alerts stay in one configuration. The extractor builds into the workspace
-      # target dir, which rust-cache restores.
+      # Rust uploads under the category main already uses, so its alerts stay in
+      # one configuration. The extractor builds into the workspace target dir,
+      # which rust-cache restores.
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         if: matrix.language == 'rust'
+        with:
+          category: .github/workflows/codeql.yml:analyze
         env:
           CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ github.workspace }}/target
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
