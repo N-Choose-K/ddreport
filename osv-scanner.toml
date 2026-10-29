@@ -1,0 +1,43 @@
+# Advisories Scorecard's Vulnerabilities check reports that ddreport cannot fix
+# itself. Revisit when typst or ratatui release updated dependencies.
+
+# Locked only: digest 0.10 via ratatui's optional termwiz backend, never built.
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "block-buffer 0.10 is lockfile-only (ratatui termwiz backend, disabled); built code uses 0.12.1"
+
+# quick-xml 0.38 via typst-library -> hayagriva -> citationberg. Parses typst's
+# bundled CSL data only, never user input. Mirrors deny.toml.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0194"
+reason = "quick-xml pinned by typst 0.15 via citationberg; parses bundled CSL data only"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0195"
+reason = "quick-xml pinned by typst 0.15 via citationberg; parses bundled CSL data only"
+
+# Unmaintained-crate notices for transitive typst 0.15 dependencies. No
+# vulnerability, and no maintained release of typst drops them yet.
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "bincode unmaintained; transitive via typst -> syntect"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste unmaintained; transitive via typst -> hayagriva"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0206"
+reason = "rustybuzz unmaintained; transitive via typst -> krilla"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+reason = "ttf-parser unmaintained; transitive via typst -> fontdb, krilla"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0449"
+reason = "unsafe-libyaml unmaintained; transitive via typst -> hayagriva"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0320"
+reason = "yaml-rust unmaintained; transitive via typst -> syntect"
