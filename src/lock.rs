@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use lopdf::Document;
 use lopdf::encryption::crypt_filters::{Aes128CryptFilter, CryptFilter};
 use lopdf::encryption::{EncryptionState, EncryptionVersion, Permissions};
-use rand::RngCore;
+use rand::Rng;
 
 /// Everything a reader may do with the file; editing is excluded.
 pub const ALLOWED: Permissions = Permissions::PRINTABLE
@@ -25,7 +25,7 @@ pub const ALLOWED: Permissions = Permissions::PRINTABLE
 pub fn lock(pdf: &[u8]) -> Result<Vec<u8>> {
     let mut doc = Document::load_mem(pdf).context("parsing the rendered PDF")?;
     let mut owner = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut owner);
+    rand::rng().fill_bytes(&mut owner);
     let owner: String = owner.iter().map(|b| format!("{b:02x}")).collect();
 
     let filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> =
